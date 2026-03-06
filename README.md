@@ -47,7 +47,7 @@ The database stores ~131,000 lunar month records with JDN ranges, covering:
 ### Setup
 
 ```bash
-git clone https://github.com/sije/calendar_converter.git
+git clone https://github.com/kltng/calendar_converter.git
 cd calendar_converter
 
 # Install dependencies
