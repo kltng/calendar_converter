@@ -6,6 +6,5 @@ dist/
 build/
 .pytest_cache/
 .mypy_cache/
-data/calendar.db
 data/raw/
 uv.lock
