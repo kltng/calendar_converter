@@ -105,7 +105,7 @@ Response:
   "ganzhi": {
     "year": "庚午",
     "month": "辛巳",
-    "day": "庚申"
+    "day": "壬子"
   },
   "cjk_dates": [
     {
@@ -212,11 +212,26 @@ WHERE es.start_jdn <= 2316539 AND es.end_jdn >= 2316539;
 
 ### 3. MCP Server (LLM Integration)
 
-The MCP server lets LLMs call calendar conversion as a tool via the [Model Context Protocol](https://modelcontextprotocol.io/).
+The MCP server lets LLMs call calendar conversion as a tool via the [Model Context Protocol](https://modelcontextprotocol.io/). Two transports are supported:
 
-#### Configure in Claude Code
+#### Option A: Streamable HTTP (Remote)
 
-Add to your Claude Code MCP settings (`~/.claude/settings.json` or project `.mcp.json`):
+The deployed API includes an MCP endpoint at `/mcp/`. Use this with any MCP client that supports Streamable HTTP transport — no local installation needed.
+
+```json
+{
+  "mcpServers": {
+    "calendar": {
+      "type": "streamable-http",
+      "url": "https://calendar-converter.098484.xyz/mcp/"
+    }
+  }
+}
+```
+
+#### Option B: stdio (Local)
+
+For local use, run the stdio-based MCP server directly:
 
 ```json
 {
@@ -257,6 +272,9 @@ All tools accept an optional `country` parameter (`"chinese"`, `"japanese"`, `"k
 | 廿/卅 shorthands | `康熙三年臘月廿九` | 康熙 era, year 3, month 12, day 29 |
 | Year only | `崇禎三年` | First month of that year |
 | Year+month only | `崇禎三年四月` | First day of that month |
+| Ganzhi year | `嘉慶甲子年` | 嘉慶 era, year with ganzhi 甲子 |
+| Full ganzhi | `崇禎庚午年辛巳月壬子日` | Resolved via sexagenary cycle lookup |
+| Mixed ganzhi+numeric | `崇禎庚午年四月初三` | Ganzhi year + numeric month/day |
 
 ### Japanese Shorthand
 
@@ -308,7 +326,7 @@ The `month` table is the core: each row represents one lunar month with its JDN 
 ## Development
 
 ```bash
-# Run all tests (58 tests)
+# Run all tests (68 tests)
 uv run pytest
 
 # Run a single test file

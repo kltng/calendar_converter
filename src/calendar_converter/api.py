@@ -1,12 +1,13 @@
 """FastAPI routes for calendar conversion."""
 
-from contextlib import asynccontextmanager
+import contextlib
 from pathlib import Path
 from typing import AsyncGenerator
 import sqlite3
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+from starlette.routing import Mount
 
 from .converter import (
     convert_cjk_to_jdn,
@@ -15,17 +16,19 @@ from .converter import (
     gregorian_to_jdn,
 )
 from .db import get_connection, DB_PATH
+from .mcp_http import mcp as mcp_server
 from .models import DateConversion, EraMetadata, ErrorResponse
 from .parser import parse_cjk_date
 
 _conn: sqlite3.Connection | None = None
 
 
-@asynccontextmanager
+@contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _conn
     _conn = get_connection()
-    yield
+    async with mcp_server.session_manager.run():
+        yield
     if _conn:
         _conn.close()
 
@@ -35,10 +38,14 @@ app = FastAPI(
     description=(
         "Convert dates between Chinese, Japanese, Korean historical calendars "
         "using Julian Day Numbers as universal pivot. "
-        "Input CJK dates like 崇禎三年四月初三 and get equivalent dates across all calendars."
+        "Input CJK dates like 崇禎三年四月初三 and get equivalent dates across all calendars. "
+        "MCP endpoint available at /mcp for LLM tool-use."
     ),
     version="0.1.0",
     lifespan=lifespan,
+    routes=[
+        Mount("/mcp", app=mcp_server.streamable_http_app()),
+    ],
 )
 
 
