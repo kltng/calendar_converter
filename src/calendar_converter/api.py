@@ -69,6 +69,8 @@ async def convert(
     jdn: int | None = Query(None, description="Julian Day Number"),
     gregorian: str | None = Query(None, description="Gregorian date (YYYY-MM-DD)"),
     country: str | None = Query(None, description="Country hint: chinese, japanese, korean"),
+    dynasty: str | None = Query(None, description="Dynasty hint for disambiguation, e.g. 唐, 元"),
+    emperor: str | None = Query(None, description="Emperor hint for disambiguation, e.g. 肅宗, 順帝"),
 ) -> DateConversion | ErrorResponse:
     """Convert a date. Provide exactly one of: date, jdn, or gregorian."""
     db = conn()
@@ -94,6 +96,10 @@ async def convert(
 
         if country:
             parsed.country_hint = country
+        if dynasty:
+            parsed.dynasty_hint = dynasty
+        if emperor:
+            parsed.emperor_hint = emperor
 
         results = convert_cjk_to_jdn(db, parsed)
         if not results:

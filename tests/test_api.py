@@ -62,6 +62,30 @@ class TestConvert:
         r = client.get("/convert", params={"date": "寛永七年四月初三", "country": "japanese"})
         assert r.status_code == 200
 
+    def test_convert_with_dynasty_hint(self, client):
+        r = client.get("/convert", params={"date": "至元三年正月初一", "dynasty": "元"})
+        assert r.status_code == 200
+        data = r.json()
+        assert "error" not in data
+        assert data["jdn"] > 0
+
+    def test_convert_with_emperor_hint(self, client):
+        """上元二年 with emperor=肅宗 should return 761 CE."""
+        r = client.get("/convert", params={"date": "上元二年正月初一", "emperor": "肅宗"})
+        assert r.status_code == 200
+        data = r.json()
+        assert "error" not in data
+        assert data["gregorian"].startswith("0761")
+
+    def test_convert_with_dynasty_and_emperor_hint(self, client):
+        """至元 with dynasty=元, emperor=順帝 -> 1337."""
+        r = client.get("/convert", params={
+            "date": "至元三年正月初一", "dynasty": "元", "emperor": "順帝",
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["gregorian"].startswith("1337")
+
 
 class TestEras:
     def test_search_by_name(self, client):

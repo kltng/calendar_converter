@@ -23,8 +23,10 @@ def find_eras_by_name(
     conn: sqlite3.Connection,
     era_name: str,
     country: str | None = None,
+    dynasty: str | None = None,
+    emperor: str | None = None,
 ) -> list[sqlite3.Row]:
-    """Find all eras matching a given name, optionally filtered by country."""
+    """Find all eras matching a given name, optionally filtered by country/dynasty/emperor."""
     sql = """
         SELECT es.*
         FROM era_summary es
@@ -34,6 +36,12 @@ def find_eras_by_name(
     if country:
         sql += " AND es.country = ?"
         params.append(country)
+    if dynasty:
+        sql += " AND es.dynasty_name = ?"
+        params.append(dynasty)
+    if emperor:
+        sql += " AND es.emperor_name = ?"
+        params.append(emperor)
     sql += " ORDER BY es.start_jdn"
     return conn.execute(sql, params).fetchall()
 

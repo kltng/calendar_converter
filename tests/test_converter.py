@@ -181,3 +181,258 @@ class TestCJKConversion:
         assert info.year_in_era == 3
         y, m, d = jdn_to_gregorian(jdn)
         assert (y, m, d) == (1630, 5, 14)
+
+
+class TestDisambiguation:
+    """Test dynasty/emperor hints for intra-dynasty era name disambiguation."""
+
+    def test_shangyuan_no_hint(self, db):
+        """上元二年 without hint returns both Tang uses (高宗 675 and 肅宗 761)."""
+        parsed = ParsedDate(era="上元", year=2, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 2
+        emperors = {info.emperor_name for _, info in results}
+        assert "高宗" in emperors
+        assert "肅宗" in emperors
+
+    def test_shangyuan_emperor_hint(self, db):
+        """上元二年 with emperor=肅宗 returns only 肅宗's era (761 CE)."""
+        parsed = ParsedDate(era="上元", year=2, month=1, day=1, emperor_hint="肅宗")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        jdn, info = results[0]
+        assert info.emperor_name == "肅宗"
+        y, m, d = jdn_to_gregorian(jdn)
+        assert y == 761
+
+    def test_shangyuan_dynasty_emperor_hint(self, db):
+        """上元二年 with dynasty=唐, emperor=高宗 returns 675 CE."""
+        parsed = ParsedDate(era="上元", year=2, month=1, day=1,
+                            dynasty_hint="唐", emperor_hint="高宗")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        jdn, info = results[0]
+        assert info.emperor_name == "高宗"
+        y, m, d = jdn_to_gregorian(jdn)
+        assert y == 675
+
+    def test_zhiyuan_yuan_dynasty_hint(self, db):
+        """至元 in Yuan: dynasty hint narrows to Yuan only (not 西夏 etc.)."""
+        parsed = ParsedDate(era="至元", year=20, month=1, day=1, dynasty_hint="元")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        _, info = results[0]
+        assert info.dynasty_name == "元"
+        assert info.emperor_name == "世祖"
+
+    def test_zhiyuan_shundi(self, db):
+        """至元三年 with emperor=順帝 returns 1337, not 世祖's era."""
+        parsed = ParsedDate(era="至元", year=3, month=1, day=1,
+                            dynasty_hint="元", emperor_hint="順帝")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        jdn, info = results[0]
+        assert info.emperor_name == "順帝"
+        y, m, d = jdn_to_gregorian(jdn)
+        assert y == 1337
+
+    def test_country_hint_still_works(self, db):
+        """country_hint should still filter as before."""
+        parsed = ParsedDate(era="貞觀", year=3, month=1, day=1, country_hint="chinese")
+        results = convert_cjk_to_jdn(db, parsed)
+        for _, info in results:
+            assert info.country == "chinese"
+
+    def test_dynasty_hint_song(self, db):
+        """開寶三年 with dynasty=北宋 excludes 吳越."""
+        parsed = ParsedDate(era="開寶", year=3, month=1, day=1, dynasty_hint="北宋")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        _, info = results[0]
+        assert info.dynasty_name == "北宋"
+
+
+class TestCnEraConversions:
+    """Test cases derived from the cn-era NPM package (CBDB-based).
+
+    cn-era operates at year level (Gregorian year -> era name). These tests
+    verify our month-level data is consistent with CBDB's era year boundaries.
+    """
+
+    def test_tang_wude(self, db):
+        """Tang 武德二年正月 = 619 CE (year 1 starts mid-year in month 5)."""
+        parsed = ParsedDate(era="武德", year=2, month=1, day=1, dynasty_hint="唐")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 619
+
+    def test_tang_zhenguan_year1(self, db):
+        """Tang 貞觀元年 = 627 CE."""
+        parsed = ParsedDate(era="貞觀", year=1, month=1, day=1, dynasty_hint="唐")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 627
+
+    def test_tang_kaiyuan(self, db):
+        """Tang 開元二年正月 = 714 CE (year 1 starts in month 12)."""
+        parsed = ParsedDate(era="開元", year=2, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 714
+
+    def test_tang_tianbao(self, db):
+        """Tang 天寶元年 = 742 CE."""
+        parsed = ParsedDate(era="天寶", year=1, month=1, day=1, dynasty_hint="唐")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 742
+
+    def test_song_jianlong_year1(self, db):
+        """Song 建隆元年 = 960 CE."""
+        parsed = ParsedDate(era="建隆", year=1, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 960
+
+    def test_yuan_zhongtong(self, db):
+        """Yuan 中統二年正月 = 1261 CE (year 1 starts in month 5)."""
+        parsed = ParsedDate(era="中統", year=2, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1261
+
+    def test_yuan_zhiyuan_shizu(self, db):
+        """Yuan 至元(世祖) year 17 = 1280 CE."""
+        parsed = ParsedDate(era="至元", year=17, month=1, day=1,
+                            dynasty_hint="元", emperor_hint="世祖")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1280
+
+    def test_yuan_zhiyuan_shundi(self, db):
+        """Yuan 至元(順帝) year 1 = 1335 CE."""
+        parsed = ParsedDate(era="至元", year=1, month=1, day=1,
+                            dynasty_hint="元", emperor_hint="順帝")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) == 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1335
+
+    def test_ming_hongwu(self, db):
+        """Ming 洪武元年 = 1368 CE."""
+        parsed = ParsedDate(era="洪武", year=1, month=1, day=1, dynasty_hint="明")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1368
+
+    def test_ming_yongle(self, db):
+        """Ming 永樂元年 = 1403 CE."""
+        parsed = ParsedDate(era="永樂", year=1, month=1, day=1, dynasty_hint="明")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1403
+
+    def test_ming_wanli(self, db):
+        """Ming 萬曆元年 = 1573 CE."""
+        parsed = ParsedDate(era="萬曆", year=1, month=1, day=1, dynasty_hint="明")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1573
+
+    def test_ming_chongzhen(self, db):
+        """Ming 崇禎元年 = 1628 CE."""
+        parsed = ParsedDate(era="崇禎", year=1, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1628
+
+    def test_qing_shunzhi(self, db):
+        """Qing 順治元年 = 1644 CE."""
+        parsed = ParsedDate(era="順治", year=1, month=1, day=1, dynasty_hint="清")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1644
+
+    def test_qing_kangxi(self, db):
+        """Qing 康熙元年 = 1662 CE."""
+        parsed = ParsedDate(era="康熙", year=1, month=1, day=1, dynasty_hint="清")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1662
+
+    def test_qing_qianlong(self, db):
+        """Qing 乾隆元年 = 1736 CE."""
+        parsed = ParsedDate(era="乾隆", year=1, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1736
+
+    def test_qing_guangxu(self, db):
+        """Qing 光緒元年 = 1875 CE."""
+        parsed = ParsedDate(era="光緒", year=1, month=1, day=1, dynasty_hint="清")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1875
+
+    def test_three_kingdoms_wei(self, db):
+        """Wei 黃初二年正月 = 221 CE (year 1 starts in month 10)."""
+        parsed = ParsedDate(era="黃初", year=2, month=1, day=1, dynasty_hint="曹魏")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 221
+
+    def test_western_jin_taishi(self, db):
+        """Western Jin 泰始二年正月 = 266 CE (year 1 starts in month 12)."""
+        parsed = ParsedDate(era="泰始", year=2, month=1, day=1, dynasty_hint="西晉")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 266
+
+    def test_concurrent_eras_jingkang(self, db):
+        """靖康 (1126-1127): should exist in our data."""
+        parsed = ParsedDate(era="靖康", year=1, month=1, day=1)
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        y, _, _ = jdn_to_gregorian(results[0][0])
+        assert y == 1126
+
+    def test_liao_era(self, db):
+        """Liao 天顯二年正月 should exist (year 1 starts in month 2)."""
+        parsed = ParsedDate(era="天顯", year=2, month=1, day=1, dynasty_hint="遼")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        _, info = results[0]
+        assert info.dynasty_name == "遼"
+
+    def test_xixia_era(self, db):
+        """Xi Xia 大慶二年正月 should exist (year 1 starts in month 12)."""
+        parsed = ParsedDate(era="大慶", year=2, month=1, day=1, dynasty_hint="西夏")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        _, info = results[0]
+        assert info.dynasty_name == "西夏"
+
+    def test_jin_dynasty_tianhui(self, db):
+        """Jin 天會二年正月 should map to Jin dynasty (year 1 starts in month 9)."""
+        parsed = ParsedDate(era="天會", year=2, month=1, day=1, dynasty_hint="金")
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        _, info = results[0]
+        assert info.dynasty_name == "金"

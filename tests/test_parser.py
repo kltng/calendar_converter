@@ -137,3 +137,20 @@ class TestParseCJKDate:
 
     def test_invalid_returns_none(self):
         assert parse_cjk_date("hello world") is None
+
+    def test_era_ending_in_yuan(self):
+        """Era names ending in 元 (e.g. 上元, 至元) should parse correctly."""
+        d = parse_cjk_date("上元元年正月初一")
+        assert d is not None
+        assert d.era == "上元"
+        assert d.year == 1
+
+        d = parse_cjk_date("至元三年正月初一")
+        assert d is not None
+        assert d.era == "至元"
+        assert d.year == 3
+
+        d = parse_cjk_date("建元元年正月初一")
+        assert d is not None
+        assert d.era == "建元"
+        assert d.year == 1

@@ -43,6 +43,14 @@ TOOLS = [
                     "enum": ["chinese", "japanese", "korean"],
                     "description": "Optional country hint to disambiguate era names",
                 },
+                "dynasty": {
+                    "type": "string",
+                    "description": "Optional dynasty hint to disambiguate era names, e.g. '唐', '元', '北宋'",
+                },
+                "emperor": {
+                    "type": "string",
+                    "description": "Optional emperor hint to disambiguate era names, e.g. '肅宗', '順帝'",
+                },
             },
             "required": ["date"],
         },
@@ -120,6 +128,10 @@ def _handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
             if "country" in arguments:
                 parsed.country_hint = arguments["country"]
+            if "dynasty" in arguments:
+                parsed.dynasty_hint = arguments["dynasty"]
+            if "emperor" in arguments:
+                parsed.emperor_hint = arguments["emperor"]
 
             results = convert_cjk_to_jdn(conn, parsed)
             if not results:

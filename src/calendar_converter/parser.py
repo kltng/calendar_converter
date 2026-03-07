@@ -21,6 +21,8 @@ class ParsedDate:
     day: int | None = None
     is_leap_month: bool = False
     country_hint: str | None = None
+    dynasty_hint: str | None = None
+    emperor_hint: str | None = None
     ganzhi_year: str | None = None
     ganzhi_month: str | None = None
     ganzhi_day: str | None = None
@@ -110,7 +112,7 @@ def _parse_chinese_number(s: str) -> int | None:
 _CJK_PATTERN = re.compile(
     r"^"
     r"(?P<era>[^\d\s年]{1,10}?)"       # era name (non-greedy, 1-10 chars)
-    r"(?P<year>[元一二三四五六七八九十百廿卅\d]+)年"  # year + 年
+    r"(?P<year>元|[一二三四五六七八九十百廿卅\d]+)年"  # year + 年 (元 only as standalone)
     r"(?:"                              # optional month+day group
     r"(?P<leap>閏)?"                    # optional leap month marker
     r"(?P<month>[正一二三四五六七八九十廿]+)月"  # month + 月

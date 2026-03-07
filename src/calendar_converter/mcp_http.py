@@ -33,12 +33,18 @@ def _get_conn():
 
 
 @mcp.tool()
-def convert_cjk_date(date: str, country: str | None = None) -> str:
+def convert_cjk_date(
+    date: str,
+    country: str | None = None,
+    dynasty: str | None = None,
+    emperor: str | None = None,
+) -> str:
     """Convert a CJK (Chinese/Japanese/Korean/Vietnamese) historical date to Julian Day Number
     and equivalent dates in all concurrent calendars.
     Input examples: '崇禎三年四月初三', '康熙元年正月初一', '寛永七年四月初三', 'M45.7.30'.
     Returns JDN, Gregorian date, Julian date (pre-1582), ganzhi (干支),
-    and all concurrent CJK era representations."""
+    and all concurrent CJK era representations.
+    Use dynasty/emperor hints to disambiguate repeated era names (e.g. 上元 in Tang)."""
     conn = _get_conn()
     try:
         parsed = parse_cjk_date(date)
@@ -47,6 +53,10 @@ def convert_cjk_date(date: str, country: str | None = None) -> str:
 
         if country:
             parsed.country_hint = country
+        if dynasty:
+            parsed.dynasty_hint = dynasty
+        if emperor:
+            parsed.emperor_hint = emperor
 
         results = convert_cjk_to_jdn(conn, parsed)
         if not results:

@@ -160,7 +160,10 @@ def convert_cjk_to_jdn(
     is ambiguous (same name used in different dynasties/countries).
     Supports ganzhi-based year/month/day (e.g. 嘉慶甲午年丁亥月丙子日).
     """
-    eras = find_eras_by_name(conn, parsed.era, parsed.country_hint)
+    eras = find_eras_by_name(
+        conn, parsed.era, parsed.country_hint,
+        dynasty=parsed.dynasty_hint, emperor=parsed.emperor_hint,
+    )
     if not eras:
         return []
 
