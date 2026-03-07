@@ -323,6 +323,58 @@ The `month` table is the core: each row represents one lunar month with its JDN 
 
 ---
 
+## Agent Skill (Claude Code / LLM Tool Use)
+
+The `skill/` directory contains a **standalone agent skill** — a self-contained, zero-dependency Python script with its own SQLite database that any LLM agent (Claude Code, etc.) can use for calendar conversion without needing the full API server.
+
+### What's Included
+
+```
+skill/
+├── SKILL.md                        # Skill manifest and documentation
+├── scripts/
+│   ├── calendar_converter.py       # Standalone converter (Python 3.10+, stdlib only)
+│   └── .gitignore                  # Ignores downloaded calendar.db
+└── references/
+    └── database_schema.md          # SQLite schema and query patterns
+```
+
+### Setup
+
+```bash
+# Download the SQLite database (~14 MB) on first use
+python3 skill/scripts/calendar_converter.py setup
+```
+
+### CLI Usage
+
+```bash
+# CJK date → Gregorian
+python3 skill/scripts/calendar_converter.py convert "崇禎三年四月初三"
+
+# Gregorian → all CJK calendars
+python3 skill/scripts/calendar_converter.py gregorian 1644 3 19
+
+# Julian Day Number → all calendars
+python3 skill/scripts/calendar_converter.py jdn 2299161
+
+# Search eras
+python3 skill/scripts/calendar_converter.py eras --name 康熙
+python3 skill/scripts/calendar_converter.py eras --dynasty 明 --country chinese
+```
+
+### Adding to a Skill Hub
+
+Copy the `skill/` directory (or symlink it) into your skill hub:
+
+```bash
+cp -r skill/ /path/to/your-skill-hub/cjk-calendar
+```
+
+The skill is fully self-contained: zero external dependencies, downloads its own database, and runs with Python 3.10+ stdlib only.
+
+---
+
 ## Development
 
 ```bash
