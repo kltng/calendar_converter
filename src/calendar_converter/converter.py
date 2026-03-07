@@ -6,7 +6,7 @@ All conversions go through JDN: CJK date → JDN → Gregorian/Julian/other CJK 
 """
 
 import sqlite3
-from .db import find_eras_by_name, find_month, find_date_by_jdn
+from .db import find_eras_by_name, find_month, find_date_by_jdn, find_years_by_ganzhi
 from .models import DateConversion, EraInfo, GanzhiInfo, EraMetadata, ParsedDate as ParsedDateModel
 from .parser import ParsedDate
 
@@ -39,9 +39,10 @@ def ganzhi_index_from_str(gz: str) -> int | None:
 def jdn_to_ganzhi_day(jdn: int) -> str:
     """Compute the sexagenary (干支) day designation for a given JDN.
 
-    Anchor: JDN 2299161 (Oct 15, 1582) = 壬午日 = cycle index 18.
+    The ganzhi day cycle index for any JDN is (JDN + 49) mod 60.
+    Verified against DILA Authority Database.
     """
-    idx = (jdn - 2299161 + 18) % 60
+    idx = (jdn + 49) % 60
     return _ganzhi_from_index(idx)
 
 
@@ -131,6 +132,24 @@ def format_date(year: int, month: int, day: int) -> str:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
+def _resolve_ganzhi_month(year_ganzhi: str, target_gz_month: str) -> int | None:
+    """Resolve a ganzhi month string to a lunar month number (1-12)."""
+    for m in range(1, 13):
+        if month_ganzhi(year_ganzhi, m) == target_gz_month:
+            return m
+    return None
+
+
+def _resolve_ganzhi_day(
+    first_jdn: int, last_jdn: int, start_from: int, target_gz_day: str,
+) -> int | None:
+    """Resolve a ganzhi day string to a day number within a lunar month."""
+    for jdn in range(first_jdn, last_jdn + 1):
+        if jdn_to_ganzhi_day(jdn) == target_gz_day:
+            return jdn - first_jdn + start_from
+    return None
+
+
 def convert_cjk_to_jdn(
     conn: sqlite3.Connection,
     parsed: ParsedDate,
@@ -139,6 +158,7 @@ def convert_cjk_to_jdn(
 
     Returns list of (jdn, era_info) tuples. Multiple results when era name
     is ambiguous (same name used in different dynasties/countries).
+    Supports ganzhi-based year/month/day (e.g. 嘉慶甲午年丁亥月丙子日).
     """
     eras = find_eras_by_name(conn, parsed.era, parsed.country_hint)
     if not eras:
@@ -148,37 +168,68 @@ def convert_cjk_to_jdn(
 
     for era_row in eras:
         era_id = era_row["era_id"]
-        months = find_month(
-            conn, era_id, parsed.year,
-            parsed.month, parsed.is_leap_month,
-        )
 
-        for month_row in months:
-            if parsed.day is not None:
-                day_offset = parsed.day - month_row["start_from"]
-                jdn = month_row["first_jdn"] + day_offset
-                # Validate JDN is within month range
-                if jdn > month_row["last_jdn"]:
+        # Resolve year(s): either numeric or from ganzhi
+        if parsed.ganzhi_year and parsed.year is None:
+            year_rows = find_years_by_ganzhi(conn, era_id, parsed.ganzhi_year)
+            years = [r["year"] for r in year_rows]
+        elif parsed.year is not None:
+            years = [parsed.year]
+        else:
+            continue
+
+        for year in years:
+            # Resolve month from ganzhi if needed
+            month = parsed.month
+            is_leap = parsed.is_leap_month
+            if parsed.ganzhi_month and month is None:
+                # Need the year ganzhi to resolve month ganzhi
+                year_gz = parsed.ganzhi_year
+                if not year_gz:
+                    # Look up from DB
+                    yr_rows = find_years_by_ganzhi(conn, era_id, "")
                     continue
-            else:
-                # No day specified, return first day of month
-                jdn = month_row["first_jdn"]
+                month = _resolve_ganzhi_month(year_gz, parsed.ganzhi_month)
+                if month is None:
+                    continue
+                is_leap = False  # ganzhi doesn't distinguish leap months
 
-            day_in_month = parsed.day if parsed.day is not None else month_row["start_from"]
+            months = find_month(conn, era_id, year, month, is_leap)
 
-            era_info = EraInfo(
-                era_name=era_row["era_name"],
-                era_id=era_id,
-                emperor_name=era_row["emperor_name"],
-                dynasty_name=era_row["dynasty_name"],
-                country=era_row["country"],
-                year_in_era=parsed.year,
-                month=month_row["month"],
-                month_name=month_row["month_name"],
-                is_leap_month=bool(month_row["leap_month"]),
-                day=day_in_month,
-            )
-            results.append((jdn, era_info))
+            for month_row in months:
+                # Resolve day from ganzhi if needed
+                day = parsed.day
+                if parsed.ganzhi_day and day is None:
+                    day = _resolve_ganzhi_day(
+                        month_row["first_jdn"], month_row["last_jdn"],
+                        month_row["start_from"], parsed.ganzhi_day,
+                    )
+                    if day is None:
+                        continue
+
+                if day is not None:
+                    day_offset = day - month_row["start_from"]
+                    jdn = month_row["first_jdn"] + day_offset
+                    if jdn > month_row["last_jdn"]:
+                        continue
+                else:
+                    jdn = month_row["first_jdn"]
+
+                day_in_month = day if day is not None else month_row["start_from"]
+
+                era_info = EraInfo(
+                    era_name=era_row["era_name"],
+                    era_id=era_id,
+                    emperor_name=era_row["emperor_name"],
+                    dynasty_name=era_row["dynasty_name"],
+                    country=era_row["country"],
+                    year_in_era=year,
+                    month=month_row["month"],
+                    month_name=month_row["month_name"],
+                    is_leap_month=bool(month_row["leap_month"]),
+                    day=day_in_month,
+                )
+                results.append((jdn, era_info))
 
     return results
 

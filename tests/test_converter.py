@@ -80,7 +80,7 @@ class TestGanzhi:
         result = convert_jdn(db, 2316539)  # 崇禎三年四月初三
         assert result.ganzhi.year == "庚午"
         assert result.ganzhi.month == "辛巳"
-        assert result.ganzhi.day == "庚申"
+        assert result.ganzhi.day == "壬子"  # verified against DILA
 
 
 @pytest.fixture
@@ -154,3 +154,30 @@ class TestCJKConversion:
         result = convert_jdn(db, 2316539)
         countries = {d.country for d in result.cjk_dates}
         assert "vietnamese" in countries
+
+    def test_ganzhi_full_date(self, db):
+        """崇禎庚午年辛巳月壬子日 = 崇禎三年四月初三 = 1630-05-14"""
+        parsed = ParsedDate(
+            era="崇禎", ganzhi_year="庚午",
+            ganzhi_month="辛巳", ganzhi_day="壬子",
+        )
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        jdn, info = results[0]
+        assert info.year_in_era == 3
+        assert info.month == 4
+        assert info.day == 3
+        y, m, d = jdn_to_gregorian(jdn)
+        assert (y, m, d) == (1630, 5, 14)
+
+    def test_ganzhi_year_with_numeric_month_day(self, db):
+        """崇禎庚午年四月初三 = same as above"""
+        parsed = ParsedDate(
+            era="崇禎", ganzhi_year="庚午", month=4, day=3,
+        )
+        results = convert_cjk_to_jdn(db, parsed)
+        assert len(results) >= 1
+        jdn, info = results[0]
+        assert info.year_in_era == 3
+        y, m, d = jdn_to_gregorian(jdn)
+        assert (y, m, d) == (1630, 5, 14)

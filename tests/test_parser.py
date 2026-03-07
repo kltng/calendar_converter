@@ -109,5 +109,31 @@ class TestParseCJKDate:
         assert parse_cjk_date("") is None
         assert parse_cjk_date("  ") is None
 
+    def test_ganzhi_full(self):
+        d = parse_cjk_date("崇禎庚午年辛巳月庚申日")
+        assert d is not None
+        assert d.era == "崇禎"
+        assert d.year is None
+        assert d.ganzhi_year == "庚午"
+        assert d.ganzhi_month == "辛巳"
+        assert d.ganzhi_day == "庚申"
+
+    def test_ganzhi_year_only(self):
+        d = parse_cjk_date("嘉慶甲子年")
+        assert d is not None
+        assert d.era == "嘉慶"
+        assert d.ganzhi_year == "甲子"
+        assert d.ganzhi_month is None
+        assert d.ganzhi_day is None
+
+    def test_ganzhi_year_numeric_month_day(self):
+        d = parse_cjk_date("崇禎庚午年四月初三")
+        assert d is not None
+        assert d.era == "崇禎"
+        assert d.ganzhi_year == "庚午"
+        assert d.month == 4
+        assert d.day == 3
+        assert d.ganzhi_month is None
+
     def test_invalid_returns_none(self):
         assert parse_cjk_date("hello world") is None

@@ -59,6 +59,20 @@ def find_month(
     return conn.execute(sql, params).fetchall()
 
 
+def find_years_by_ganzhi(
+    conn: sqlite3.Connection,
+    era_id: int,
+    ganzhi: str,
+) -> list[sqlite3.Row]:
+    """Find all year numbers within an era that match a given year ganzhi."""
+    sql = """
+        SELECT DISTINCT year, ganzhi FROM month
+        WHERE era_id = ? AND ganzhi = ?
+        ORDER BY year
+    """
+    return conn.execute(sql, (era_id, ganzhi)).fetchall()
+
+
 def find_date_by_jdn(
     conn: sqlite3.Connection,
     jdn: int,

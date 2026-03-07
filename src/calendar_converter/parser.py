@@ -16,11 +16,14 @@ from dataclasses import dataclass
 @dataclass
 class ParsedDate:
     era: str
-    year: int
+    year: int | None = None
     month: int | None = None
     day: int | None = None
     is_leap_month: bool = False
     country_hint: str | None = None
+    ganzhi_year: str | None = None
+    ganzhi_month: str | None = None
+    ganzhi_day: str | None = None
 
 
 # Chinese numeral mapping
@@ -32,6 +35,10 @@ _DIGITS = {
     "元": 1,  # 元年 = year 1
     "正": 1,  # 正月 = month 1
 }
+
+_STEMS = "甲乙丙丁戊己庚辛壬癸"
+_BRANCHES = "子丑寅卯辰巳午未申酉戌亥"
+_GANZHI_CHAR = f"[{_STEMS}][{_BRANCHES}]"
 
 # Japanese era shorthand
 _JP_ERA_SHORT = {
@@ -115,6 +122,28 @@ _CJK_PATTERN = re.compile(
     r"$"
 )
 
+# Ganzhi year pattern: [era][干支]年[干支/numeric]月[干支/numeric]日
+_GZ_YEAR_PATTERN = re.compile(
+    r"^"
+    r"(?P<era>.+?)"
+    rf"(?P<gz_year>{_GANZHI_CHAR})年"
+    r"(?:"
+    r"(?P<leap>閏)?"
+    r"(?:"
+    rf"(?P<gz_month>{_GANZHI_CHAR})"
+    r"|"
+    r"(?P<num_month>[正一二三四五六七八九十廿]+)"
+    r")月"
+    r"(?:"
+    rf"(?P<gz_day>{_GANZHI_CHAR})"
+    r"|"
+    r"(?P<num_day>[初一二三四五六七八九十廿卅]+)"
+    r")?"
+    r"日?"
+    r")?"
+    r"$"
+)
+
 # Japanese shorthand: M45.7.30
 _JP_SHORT_PATTERN = re.compile(
     r"^(?P<era>[MTSHRLW])(?P<year>\d{1,4})"
@@ -146,6 +175,35 @@ def parse_cjk_date(text: str) -> ParsedDate | None:
         return ParsedDate(
             era=era, year=year, month=month, day=day,
             country_hint="japanese",
+        )
+
+    # Try ganzhi year pattern (must be before CJK pattern)
+    m = _GZ_YEAR_PATTERN.match(text)
+    if m:
+        era = m.group("era")
+        gz_year = m.group("gz_year")
+        is_leap = m.group("leap") is not None
+        gz_month = m.group("gz_month")
+        num_month_str = m.group("num_month")
+        gz_day = m.group("gz_day")
+        num_day_str = m.group("num_day")
+
+        month: int | None = None
+        if num_month_str:
+            month = _parse_chinese_number(num_month_str)
+        day: int | None = None
+        if num_day_str:
+            day = _parse_chinese_number(num_day_str)
+
+        return ParsedDate(
+            era=era,
+            year=None,
+            month=month,
+            day=day,
+            is_leap_month=is_leap,
+            ganzhi_year=gz_year,
+            ganzhi_month=gz_month,
+            ganzhi_day=gz_day,
         )
 
     # Try CJK pattern

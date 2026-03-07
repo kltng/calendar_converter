@@ -10,7 +10,7 @@ class TestMCPTools:
         assert result["jdn"] == 2316539
         assert result["gregorian"] == "1630-05-14"
         assert result["ganzhi"]["year"] == "庚午"
-        assert result["ganzhi"]["day"] == "庚申"
+        assert result["ganzhi"]["day"] == "壬子"  # verified against DILA
         assert len(result["cjk_dates"]) >= 1
 
     def test_convert_jdn(self):

@@ -35,11 +35,14 @@ class DateConversion(BaseModel):
 
 class ParsedDate(BaseModel):
     era: str
-    year: int
+    year: int | None = None
     month: int | None = None
     day: int | None = None
     is_leap_month: bool = False
     country_hint: str | None = None
+    ganzhi_year: str | None = None
+    ganzhi_month: str | None = None
+    ganzhi_day: str | None = None
 
 
 class EraMetadata(BaseModel):
