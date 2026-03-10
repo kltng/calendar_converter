@@ -158,6 +158,62 @@ When an era name is shared across countries, use the `country` parameter:
 curl "http://localhost:8000/convert?date=天保三年閏九月十五日&country=japanese"
 ```
 
+#### Disambiguate era names
+
+Many era names were reused across dynasties. When the converter finds multiple matching eras, the response includes `ambiguous: true` and an `other_candidates` list showing all alternative interpretations:
+
+```bash
+curl "http://localhost:8000/convert?date=乾德二年正月初一"
+```
+
+```json
+{
+  "jdn": 2057111,
+  "gregorian": "0920-01-29",
+  "ambiguous": true,
+  "other_candidates": [
+    {
+      "jdn": 2073191,
+      "gregorian": "0964-02-21",
+      "era_name": "乾德",
+      "dynasty_name": "吳越",
+      "emperor_name": "忠懿王",
+      "country": "chinese",
+      "year_in_era": 2,
+      "month": 1,
+      "day": 1
+    },
+    {
+      "jdn": 2073191,
+      "gregorian": "0964-02-21",
+      "era_name": "乾德",
+      "dynasty_name": "北宋",
+      "emperor_name": "太祖",
+      "country": "chinese",
+      "year_in_era": 2,
+      "month": 1,
+      "day": 1
+    }
+  ],
+  "cjk_dates": [ ... ]
+}
+```
+
+Use `dynasty` or `emperor` hints to narrow to a specific era:
+
+```bash
+# Narrow to Northern Song dynasty
+curl "http://localhost:8000/convert?date=乾德二年正月初一&dynasty=北宋"
+
+# Narrow by emperor name
+curl "http://localhost:8000/convert?date=上元二年正月初一&emperor=肅宗"
+
+# Combine hints
+curl "http://localhost:8000/convert?date=至元三年正月初一&dynasty=元&emperor=順帝"
+```
+
+When hints resolve the ambiguity, `ambiguous` will be `false` and `other_candidates` will be empty.
+
 #### Search eras
 
 ```bash
@@ -254,7 +310,7 @@ For local use, run the stdio-based MCP server directly:
 | `convert_gregorian_date` | Convert YYYY-MM-DD to all calendars | `date` (string) |
 | `search_era` | Search era metadata | `name`, `dynasty`, or `country` |
 
-All tools accept an optional `country` parameter (`"chinese"`, `"japanese"`, `"korean"`, `"vietnamese"`) for disambiguation.
+All conversion tools accept optional disambiguation parameters: `country` (`"chinese"`, `"japanese"`, `"korean"`, `"vietnamese"`), `dynasty` (e.g., `"唐"`, `"北宋"`), and `emperor` (e.g., `"肅宗"`). When an era name matches multiple eras, the response includes `ambiguous: true` with `other_candidates` listing all alternatives — the LLM can then re-query with hints.
 
 ---
 
@@ -378,7 +434,7 @@ The skill is fully self-contained: zero external dependencies, downloads its own
 ## Development
 
 ```bash
-# Run all tests (68 tests)
+# Run all tests (1411 tests)
 uv run pytest
 
 # Run a single test file
@@ -387,10 +443,58 @@ uv run pytest tests/test_parser.py
 # Run a specific test
 uv run pytest tests/test_converter.py::TestGanzhi::test_full_ganzhi_in_conversion -v
 
+# Run CBDB verification tests only
+uv run pytest tests/test_cbdb_verification.py -v
+
 # Rebuild the database from scratch
 uv run python -m data.scripts.build_db
 uv run python -m data.scripts.add_vietnamese
 ```
+
+### Test Suites
+
+| File | Tests | Description |
+|------|-------|-------------|
+| `test_parser.py` | 23 | CJK date string parsing |
+| `test_converter.py` | 39 | JDN conversion, ganzhi, disambiguation |
+| `test_api.py` | 19 | FastAPI endpoint integration |
+| `test_mcp.py` | 10 | MCP stdio server tools |
+| `test_dila_verification.py` | 5 | DILA reference date verification |
+| `test_cbdb_verification.py` | 1310 | CBDB nianhao cross-validation (see below) |
+
+---
+
+## CBDB Cross-Validation
+
+The test suite includes **1,310 verification cases** derived from the [China Biographical Database (CBDB)](https://projects.iq.harvard.edu/cbdb) NIAN_HAO table (`nian_hao_calc_samples.xlsx`). Each case maps an era name and year-within-era to an expected Gregorian year, independently verifying our DILA-based conversions against Harvard's CBDB dataset.
+
+### Results
+
+From 43,188 CBDB biographical records (1,596 unique era-year combinations):
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| **Verified (pass)** | 1,310 | Era + year resolves to expected Gregorian year |
+| **Ambiguous era** | 233 | Era name matches multiple dynasties; correct match exists but first-match differs. Recoverable with dynasty hints. |
+| **Off-by-one year** | 52 | ±1 year difference, likely different year-counting conventions |
+| **Year mismatch** | 105 | Larger discrepancy — probable CBDB data quality issues |
+| **No data** | 19 | Era year exceeds DILA range (e.g., 光緒41年 = 1915, past Qing) |
+| **Era not in DILA** | 23 | `中華民國` (post-imperial) and `未詳` (unknown) |
+
+### DILA vs CBDB: Key Differences
+
+| Aspect | DILA | CBDB |
+|--------|------|------|
+| **Granularity** | Month-level (JDN ranges per lunar month) | Year-level (era name + year only) |
+| **Countries** | China, Japan, Korea, Vietnam | China only |
+| **Era count** | ~1,621 eras | 718 eras |
+| **Time span** | ~220 BCE – 1945 CE | ~220 BCE – 1912 CE |
+| **Data type** | Astronomical calendar data | Biographical/prosopographical |
+| **Dynasties** | Standard dynastic succession | Includes CBDB-specific labels (太平天國, 南明, 北元, 大燕, etc.) |
+| **Era boundaries** | Based on astronomical bureau records | Based on biographical year assignments |
+| **Ambiguity** | Multiple era instances preserved with dynasty/emperor metadata | Single era assignment per person |
+
+The 233 ambiguous-era failures are not data errors in either system — they result from era names reused across dynasties (e.g., `乾德` used by 前蜀, 吳越, and 北宋). CBDB assigns each person to a specific dynasty context; without that context, our converter returns the first match. The new `ambiguous` flag and `other_candidates` response field (see [Disambiguate era names](#disambiguate-era-names)) address this for API consumers.
 
 ---
 
@@ -418,6 +522,14 @@ The **CeJS** library by kanasimi provided reference data for Vietnamese calendar
 - **Repository:** https://github.com/kanasimi/CeJS
 - **Era Converter Demo:** https://kanasimi.github.io/CeJS/_test%20suite/era.htm
 - **Coverage:** 246 BCE – 2100 CE across multiple calendar systems
+
+### CBDB (China Biographical Database)
+
+The **CBDB** project at Harvard University provided nianhao (era name) verification data used for cross-validation testing.
+
+- **Website:** https://projects.iq.harvard.edu/cbdb
+- **NIAN_HAO table:** https://input.cbdb.fas.harvard.edu/codes/NIAN_HAO
+- **Related NPM package (cn-era):** https://www.npmjs.com/package/cn-era
 
 ### Julian Day Number Algorithms
 

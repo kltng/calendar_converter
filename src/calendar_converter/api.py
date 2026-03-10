@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from starlette.routing import Mount
 
 from .converter import (
+    build_ambiguous_candidates,
     convert_cjk_to_jdn,
     convert_jdn,
     get_era_metadata,
@@ -126,13 +127,15 @@ async def convert(
                 )
             return ErrorResponse(error=f"Era '{parsed.era}' not found in database")
 
-        if len(results) == 1:
-            jdn_val, _ = results[0]
-            return convert_jdn(db, jdn_val)
-
-        # Multiple matches — return first and include all as CJK dates
         jdn_val, _ = results[0]
         conversion = convert_jdn(db, jdn_val)
+
+        # Check if results span multiple distinct eras (ambiguous)
+        distinct_era_ids = {info.era_id for _, info in results}
+        if len(distinct_era_ids) > 1:
+            conversion.ambiguous = True
+            conversion.other_candidates = build_ambiguous_candidates(results)
+
         return conversion
 
     raise HTTPException(400, "Provide one of: date, jdn, or gregorian")

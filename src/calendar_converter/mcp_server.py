@@ -10,6 +10,7 @@ import sys
 from typing import Any
 
 from .converter import (
+    build_ambiguous_candidates,
     convert_cjk_to_jdn,
     convert_jdn,
     get_era_metadata,
@@ -152,6 +153,12 @@ def _handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
             jdn_val, _ = results[0]
             conversion = convert_jdn(conn, jdn_val)
+
+            distinct_era_ids = {info.era_id for _, info in results}
+            if len(distinct_era_ids) > 1:
+                conversion.ambiguous = True
+                conversion.other_candidates = build_ambiguous_candidates(results)
+
             return conversion.model_dump_json()
 
         elif name == "convert_jdn":

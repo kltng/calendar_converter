@@ -87,6 +87,35 @@ class TestConvert:
         assert data["gregorian"].startswith("1337")
 
 
+class TestAmbiguousEra:
+    def test_ambiguous_era_returns_candidates(self, client):
+        """乾德二年 matches 前蜀, 吳越, 北宋 — should flag ambiguity."""
+        r = client.get("/convert", params={"date": "乾德二年正月初一"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ambiguous"] is True
+        assert len(data["other_candidates"]) >= 1
+        dynasties = {c["dynasty_name"] for c in data["other_candidates"]}
+        # Primary is 前蜀; others should include 北宋 or 吳越
+        assert dynasties & {"北宋", "吳越"}
+
+    def test_ambiguous_era_with_hint_not_ambiguous(self, client):
+        """乾德二年 with dynasty=北宋 should not be ambiguous."""
+        r = client.get("/convert", params={"date": "乾德二年正月初一", "dynasty": "北宋"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data.get("ambiguous", False) is False
+        assert data["gregorian"].startswith("0964")
+
+    def test_unambiguous_era_no_candidates(self, client):
+        """崇禎 is unique — should not be ambiguous."""
+        r = client.get("/convert", params={"date": "崇禎三年四月初三"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data.get("ambiguous", False) is False
+        assert data.get("other_candidates", []) == []
+
+
 class TestEras:
     def test_search_by_name(self, client):
         r = client.get("/eras", params={"name": "崇禎"})

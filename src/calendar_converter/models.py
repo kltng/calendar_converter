@@ -22,6 +22,19 @@ class GanzhiInfo(BaseModel):
     day: str = ""
 
 
+class AmbiguousCandidate(BaseModel):
+    """One possible interpretation when an era name is ambiguous."""
+    jdn: int = Field(description="Julian Day Number for this interpretation")
+    gregorian: str = Field(description="Gregorian date (ISO 8601)")
+    era_name: str
+    dynasty_name: str | None = None
+    emperor_name: str | None = None
+    country: str
+    year_in_era: int
+    month: int
+    day: int
+
+
 class DateConversion(BaseModel):
     jdn: int = Field(description="Julian Day Number")
     gregorian: str = Field(description="Proleptic Gregorian date (ISO 8601)")
@@ -30,6 +43,16 @@ class DateConversion(BaseModel):
     cjk_dates: list[EraInfo] = Field(
         default_factory=list,
         description="All concurrent CJK era representations for this date",
+    )
+    ambiguous: bool = Field(
+        False,
+        description="True when the input era name matched multiple distinct eras. "
+        "The returned date is the first match; check other_candidates for alternatives.",
+    )
+    other_candidates: list[AmbiguousCandidate] = Field(
+        default_factory=list,
+        description="Other possible interpretations when era name is ambiguous. "
+        "Use dynasty/emperor hints to disambiguate.",
     )
 
 

@@ -42,6 +42,23 @@ class TestMCPTools:
         ))
         assert "jdn" in result
 
+    def test_ambiguous_era_returns_candidates(self):
+        """乾德二年 should flag ambiguity with other_candidates."""
+        result = json.loads(_handle_tool_call("convert_cjk_date", {"date": "乾德二年正月初一"}))
+        assert result["ambiguous"] is True
+        assert len(result["other_candidates"]) >= 1
+        dynasties = {c["dynasty_name"] for c in result["other_candidates"]}
+        assert dynasties & {"北宋", "吳越"}
+
+    def test_ambiguous_era_with_hint(self):
+        """乾德二年 with dynasty=北宋 should not be ambiguous."""
+        result = json.loads(_handle_tool_call(
+            "convert_cjk_date",
+            {"date": "乾德二年正月初一", "dynasty": "北宋"},
+        ))
+        assert result.get("ambiguous", False) is False
+        assert result["gregorian"].startswith("0964")
+
     def test_unknown_tool(self):
         result = json.loads(_handle_tool_call("nonexistent", {}))
         assert "error" in result

@@ -7,7 +7,7 @@ All conversions go through JDN: CJK date → JDN → Gregorian/Julian/other CJK 
 
 import sqlite3
 from .db import find_eras_by_name, find_month, find_date_by_jdn, find_years_by_ganzhi
-from .models import DateConversion, EraInfo, GanzhiInfo, EraMetadata, ParsedDate as ParsedDateModel
+from .models import AmbiguousCandidate, DateConversion, EraInfo, GanzhiInfo, EraMetadata, ParsedDate as ParsedDateModel
 from .parser import ParsedDate
 
 # Sexagenary cycle (干支)
@@ -287,6 +287,39 @@ def convert_jdn(
         ganzhi=GanzhiInfo(year=ganzhi_year, month=ganzhi_month_str, day=ganzhi_day),
         cjk_dates=cjk_dates,
     )
+
+
+def build_ambiguous_candidates(
+    results: list[tuple[int, EraInfo]],
+) -> list[AmbiguousCandidate]:
+    """Build candidate list from ambiguous convert_cjk_to_jdn results.
+
+    Groups by era_id and returns one candidate per distinct era instance,
+    skipping the first result (which becomes the primary response).
+    """
+    seen_era_ids: set[int] = set()
+    candidates: list[AmbiguousCandidate] = []
+    for i, (jdn, info) in enumerate(results):
+        if info.era_id in seen_era_ids:
+            continue
+        seen_era_ids.add(info.era_id)
+        if i == 0:
+            continue  # skip first — it's the primary result
+        if results[0][1].era_id == info.era_id:
+            continue  # same era as primary
+        g_year, g_month, g_day = jdn_to_gregorian(jdn)
+        candidates.append(AmbiguousCandidate(
+            jdn=jdn,
+            gregorian=format_date(g_year, g_month, g_day),
+            era_name=info.era_name,
+            dynasty_name=info.dynasty_name,
+            emperor_name=info.emperor_name,
+            country=info.country,
+            year_in_era=info.year_in_era,
+            month=info.month,
+            day=info.day,
+        ))
+    return candidates
 
 
 def get_era_metadata(

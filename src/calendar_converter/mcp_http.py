@@ -12,6 +12,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from .converter import (
+    build_ambiguous_candidates,
     convert_cjk_to_jdn,
     convert_jdn as _convert_jdn,
     get_era_metadata,
@@ -76,6 +77,12 @@ def convert_cjk_date(
 
         jdn_val, _ = results[0]
         conversion = _convert_jdn(conn, jdn_val)
+
+        distinct_era_ids = {info.era_id for _, info in results}
+        if len(distinct_era_ids) > 1:
+            conversion.ambiguous = True
+            conversion.other_candidates = build_ambiguous_candidates(results)
+
         return conversion.model_dump_json()
     finally:
         conn.close()
