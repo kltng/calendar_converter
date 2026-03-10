@@ -489,6 +489,14 @@ The **CeJS** library by kanasimi provided reference data for Vietnamese calendar
 - **Era Converter Demo:** https://kanasimi.github.io/CeJS/_test%20suite/era.htm
 - **Coverage:** 246 BCE – 2100 CE across multiple calendar systems
 
+### CBDB (China Biographical Database)
+
+The **CBDB** project at Harvard University provided nianhao (era name) verification data used for cross-validation testing.
+
+- **Website:** https://projects.iq.harvard.edu/cbdb
+- **NIAN_HAO table:** https://input.cbdb.fas.harvard.edu/codes/NIAN_HAO
+- **Related NPM package (cn-era):** https://www.npmjs.com/package/cn-era
+
 ### Julian Day Number Algorithms
 
 JDN ↔ Gregorian/Julian conversion algorithms are based on:
