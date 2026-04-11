@@ -1,18 +1,15 @@
-FROM python:3.12-slim AS builder
-
-WORKDIR /app
-COPY pyproject.toml .
-COPY src/ src/
-RUN pip install --no-cache-dir .
-
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+COPY pyproject.toml ./
+RUN uv sync --no-dev --no-install-project
+
 COPY src/ src/
 COPY data/calendar.db data/calendar.db
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.calendar_converter.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "src.calendar_converter.api:app", "--host", "0.0.0.0", "--port", "8000"]

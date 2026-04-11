@@ -40,12 +40,13 @@ app = FastAPI(
         "Convert dates between Chinese, Japanese, Korean historical calendars "
         "using Julian Day Numbers as universal pivot. "
         "Input CJK dates like 崇禎三年四月初三 and get equivalent dates across all calendars. "
-        "MCP endpoint available at /mcp for LLM tool-use."
+        "MCP endpoints: /mcp (Streamable HTTP) and /sse (SSE) for LLM tool-use."
     ),
     version="0.1.0",
     lifespan=lifespan,
     routes=[
         Mount("/mcp", app=mcp_server.streamable_http_app()),
+        Mount("/sse", app=mcp_server.sse_app()),
     ],
 )
 

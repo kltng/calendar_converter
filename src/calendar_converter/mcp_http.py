@@ -1,8 +1,9 @@
 """
-MCP server using FastMCP with Streamable HTTP transport.
+MCP server using FastMCP with HTTP transports.
 
-Mounted into the FastAPI app at /mcp, so the MCP endpoint is at /mcp/mcp
-(or /mcp if streamable_http_path is set to "/").
+Mounted into the FastAPI app:
+- /mcp  — Streamable HTTP (for modern MCP clients)
+- /sse  — SSE transport (for LM Studio and other SSE-based clients)
 
 Tools mirror the stdio MCP server but use the FastMCP decorator API.
 """
@@ -23,9 +24,10 @@ from .parser import parse_cjk_date
 
 mcp = FastMCP(
     "cjk-calendar-converter",
-    stateless_http=True,
     json_response=True,
     streamable_http_path="/",
+    sse_path="/",
+    message_path="/messages/",
 )
 
 
