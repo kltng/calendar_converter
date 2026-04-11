@@ -9,8 +9,10 @@ Tools mirror the stdio MCP server but use the FastMCP decorator API.
 """
 
 import json
+import os
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .converter import (
     build_ambiguous_candidates,
@@ -22,12 +24,19 @@ from .converter import (
 from .db import get_connection
 from .parser import parse_cjk_date
 
+_allowed_hosts = ["localhost", "127.0.0.1"]
+if os.environ.get("MCP_ALLOWED_HOST"):
+    _allowed_hosts.append(os.environ["MCP_ALLOWED_HOST"])
+
 mcp = FastMCP(
     "cjk-calendar-converter",
     json_response=True,
     streamable_http_path="/",
     sse_path="/",
     message_path="/messages/",
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=_allowed_hosts,
+    ),
 )
 
 
