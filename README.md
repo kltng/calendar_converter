@@ -268,7 +268,7 @@ WHERE es.start_jdn <= 2316539 AND es.end_jdn >= 2316539;
 
 ### 3. MCP Server (LLM Integration)
 
-The MCP server lets LLMs call calendar conversion as a tool via the [Model Context Protocol](https://modelcontextprotocol.io/). Two transports are supported:
+The MCP server lets LLMs call calendar conversion as a tool via the [Model Context Protocol](https://modelcontextprotocol.io/). Three transports are supported:
 
 #### Option A: Streamable HTTP (Remote)
 
@@ -285,7 +285,22 @@ The deployed API includes an MCP endpoint at `/mcp/`. Use this with any MCP clie
 }
 ```
 
-#### Option B: stdio (Local)
+#### Option B: SSE (Remote)
+
+For MCP clients that use SSE transport (e.g., LM Studio), connect to the `/sse/` endpoint:
+
+```json
+{
+  "mcpServers": {
+    "calendar": {
+      "type": "sse",
+      "url": "https://calendar-converter.098484.xyz/sse/"
+    }
+  }
+}
+```
+
+#### Option C: stdio (Local)
 
 For local use, run the stdio-based MCP server directly:
 
@@ -299,6 +314,12 @@ For local use, run the stdio-based MCP server directly:
     }
   }
 }
+```
+
+The stdio server also supports SSE transport for local use with clients like LM Studio:
+
+```bash
+uv run python -m src.calendar_converter.mcp_server --transport sse --port 8001
 ```
 
 #### Available MCP Tools
@@ -434,7 +455,7 @@ The skill is fully self-contained: zero external dependencies, downloads its own
 ## Development
 
 ```bash
-# Run all tests (1411 tests)
+# Run all tests (1416 tests)
 uv run pytest
 
 # Run a single test file
