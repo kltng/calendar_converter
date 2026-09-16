@@ -543,3 +543,12 @@ Month ganzhi uses the traditional 五虎遁 (Five Tigers) formula. Day ganzhi is
 ## License
 
 The DILA Authority Database data is licensed under [CC BY-SA 3.0](http://creativecommons.org/licenses/by-sa/3.0/). The code in this repository is available under the MIT License. If you use the calendar data, please attribute the DILA Authority Database as required by their license.
+
+### Browser MCP clients
+
+For browser or Chrome extension clients, set `MCP_ALLOWED_ORIGINS` to a
+comma-separated list of exact origins, for example
+`chrome-extension://<extension-id>,https://your-client.example`. Whitespace and
+empty entries are ignored. Keep `MCP_ALLOWED_HOST` set to the server hostname.
+Restart the service after changing these variables. An empty origin list rejects
+requests with an Origin header; clients without one continue to work.

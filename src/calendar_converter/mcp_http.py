@@ -36,6 +36,7 @@ mcp = FastMCP(
     message_path="/messages/",
     transport_security=TransportSecuritySettings(
         allowed_hosts=_allowed_hosts,
+        allowed_origins=[origin.strip() for origin in os.environ.get("MCP_ALLOWED_ORIGINS", "").split(",") if origin.strip()],
     ),
 )
 
