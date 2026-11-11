@@ -11,9 +11,14 @@ Usage:
     python3 calendar_converter.py setup                       # Download database
     python3 calendar_converter.py convert "崇禎三年四月初三"    # CJK → Gregorian
     python3 calendar_converter.py jdn 2299161                 # JDN → all calendars
-    python3 calendar_converter.py gregorian 1644 3 19         # Gregorian → JDN + CJK
+    python3 calendar_converter.py gregorian 1644 4 25         # Gregorian → JDN + CJK
     python3 calendar_converter.py eras --name 康熙             # Search era metadata
     python3 calendar_converter.py eras --dynasty 明 --country chinese
+
+Options:
+    --country C   convert, jdn, gregorian, eras: keep only one calendar
+                  (chinese, japanese, korean, vietnamese)
+    --db PATH     any command: use this calendar.db instead of the one in scripts/
 """
 
 from __future__ import annotations
@@ -54,17 +59,25 @@ def download_db(dest: Path | None = None) -> Path:
         DB_DOWNLOAD_URL,
         headers={"User-Agent": "cjk-calendar-skill/1.0"},
     )
+    # Download to a temporary file and rename at the end, so an interrupted
+    # download never leaves a truncated calendar.db that `setup` then skips.
+    tmp = dest.with_name(dest.name + ".part")
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, "wb") as f:
+            with open(tmp, "wb") as f:
                 while True:
                     chunk = resp.read(65536)
                     if not chunk:
                         break
                     f.write(chunk)
+        with open(tmp, "rb") as f:
+            if f.read(16) != b"SQLite format 3\x00":
+                raise OSError("downloaded file is not a SQLite database")
+        os.replace(tmp, dest)
         print(f"Downloaded to {dest}")
-    except urllib.error.URLError as e:
+    except (urllib.error.URLError, OSError) as e:
+        tmp.unlink(missing_ok=True)
         print(f"Download failed: {e}", file=sys.stderr)
         print("Manual download: visit the GitHub repo and copy data/calendar.db", file=sys.stderr)
         sys.exit(1)
@@ -78,11 +91,167 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
         print(f"Database not found: {path}", file=sys.stderr)
         print("Run: python3 calendar_converter.py setup", file=sys.stderr)
         sys.exit(1)
-    conn = sqlite3.connect(str(path))
+    # Read-only: the converter never writes, and a read-only file (e.g. a
+    # shared or installed copy) must still open.
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    apply_corrections(conn)
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Corrections to the database (issues #28 and #32)
+# ---------------------------------------------------------------------------
+#
+# calendar.db is downloaded as it is and opened read-only. Known errors in it
+# are corrected here, in a TEMP view and a TEMP table that take the place of
+# `month` and `era_summary` for this connection. The file itself is never changed. Each
+# correction first checks that the error is still in the data, so it switches
+# itself off when a later calendar.db has been fixed.
+
+# (emperor, wrong era name, right era name)
+ERA_NAME_FIXES = [
+    ("成帝", "始建", "建始"),   # 西漢 成帝, 32–29 BCE; 漢書 卷10
+]
+
+# Joseon kings who took the throne after a deposition. The Sillok counts the
+# accession year as year 1 (中宗 1년 = 1506, 仁祖 1년 = 1623); the database
+# starts the count in the next year and keeps the deposed king until then.
+# (deposed king, new king, deposed king's last year, month, day of accession)
+KOREAN_ACCESSION_FIXES = [
+    ("燕山君", "中宗", 12, 9, 2),    # 中宗實錄: 1년 9월 2일 (1506-09-18 Julian)
+    ("光海君", "仁祖", 15, 3, 13),   # 仁祖實錄: 1년 3월 13일 (1623-04-12)
+]
+_KOREAN_DYNASTY = "大朝鮮國"
+
+_MONTH_COLS = ("id", "year", "month", "month_name", "leap_month", "era_id", "first_jdn",
+               "last_jdn", "ganzhi", "start_from", "status", "eclipse")
+
+_ERA_SUMMARY_SQL = """
+    CREATE TEMP TABLE era_summary AS
+    SELECT e.id AS era_id,
+           COALESCE(fx.right_name, en.name) AS era_name,
+           emp.id AS emperor_id,
+           empn.name AS emperor_name,
+           d.id AS dynasty_id,
+           dn.name AS dynasty_name,
+           d.type AS country,
+           MIN(m.first_jdn) AS start_jdn,
+           MAX(m.last_jdn) AS end_jdn
+    FROM main.era e
+    JOIN main.era_name en ON en.era_id = e.id AND en.ranking = 0
+    JOIN main.emperor emp ON emp.id = e.emperor_id
+    LEFT JOIN main.emperor_name empn ON empn.emperor_id = emp.id AND empn.ranking = 0
+    JOIN main.dynasty d ON d.id = emp.dynasty_id
+    LEFT JOIN main.dynasty_name dn ON dn.dynasty_id = d.id AND dn.ranking = 0
+    LEFT JOIN temp.era_name_fix fx ON fx.era_id = e.id
+    LEFT JOIN month m ON m.era_id = e.id
+    GROUP BY e.id
+"""
+
+
+def _era_ids(conn: sqlite3.Connection, emperor: str, era_name: str,
+             dynasty: str | None = None) -> list[int]:
+    """Era ids by emperor and era name (no month rows read, so it is fast)."""
+    sql = ("SELECT e.id FROM main.era e "
+           "JOIN main.era_name en ON en.era_id = e.id AND en.ranking = 0 "
+           "JOIN main.emperor_name empn ON empn.emperor_id = e.emperor_id AND empn.ranking = 0 "
+           "JOIN main.emperor emp ON emp.id = e.emperor_id "
+           "LEFT JOIN main.dynasty_name dn ON dn.dynasty_id = emp.dynasty_id AND dn.ranking = 0 "
+           "WHERE empn.name = ? AND en.name = ?")
+    params = [emperor, era_name]
+    if dynasty:
+        sql += " AND dn.name = ?"
+        params.append(dynasty)
+    return [r[0] for r in conn.execute(sql, params)]
+
+
+def _accession_month_rows(conn: sqlite3.Connection, old_king: str, new_king: str,
+                          last_year: int, month: int, day: int) -> tuple[list[int], list[tuple]] | None:
+    """Corrected month rows for one accession, or None when nothing is to fix."""
+    ids = {}
+    for king in (old_king, new_king):
+        found = _era_ids(conn, king, "（王年）", _KOREAN_DYNASTY)
+        if len(found) != 1:
+            return None
+        ids[king] = found[0]
+    old_id, new_id = ids[old_king], ids[new_king]
+    cols = ", ".join(_MONTH_COLS)
+    old_rows = [dict(r) for r in conn.execute(
+        f"SELECT {cols} FROM main.month WHERE era_id = ? ORDER BY first_jdn, id", (old_id,))]
+    new_rows = [dict(r) for r in conn.execute(
+        f"SELECT {cols} FROM main.month WHERE era_id = ? ORDER BY first_jdn, id", (new_id,))]
+    pieces = [r for r in old_rows
+              if r["year"] == last_year and r["month"] == month and not r["leap_month"]]
+    if not pieces or not new_rows:
+        return None
+    month_first = min(r["first_jdn"] for r in pieces)
+    month_last = max(r["last_jdn"] for r in pieces)
+    first_day = min(r["start_from"] for r in pieces)
+    accession = month_first + (day - first_day)
+    if not month_first <= accession <= month_last:
+        return None
+    if (min(r["first_jdn"] for r in new_rows) <= accession
+            or max(r["last_jdn"] for r in old_rows) <= accession):
+        return None  # the database already starts the new king in the accession year
+
+    out: list[dict] = []
+    for r in old_rows:
+        if r["last_jdn"] < month_first:
+            out.append(r)
+    base = pieces[0]
+    if accession > month_first:  # the deposed king's part of the month
+        out.append({**base, "first_jdn": month_first, "last_jdn": accession - 1,
+                    "start_from": first_day, "status": "S"})
+    # the new king's part; a negative id marks a row that is not in the file
+    out.append({**base, "id": -base["id"], "era_id": new_id, "year": 1,
+                "first_jdn": accession, "last_jdn": month_last, "start_from": day, "status": "S"})
+    for r in old_rows:
+        if r["first_jdn"] > month_last:
+            out.append({**r, "era_id": new_id, "year": 1, "status": "S"})
+    for r in new_rows:
+        out.append({**r, "year": r["year"] + 1})
+    return [old_id, new_id], [tuple(r[c] for c in _MONTH_COLS) for r in out]
+
+
+def apply_corrections(conn: sqlite3.Connection) -> None:
+    """Put corrected TEMP copies of `month` and `era_summary` on this connection."""
+    try:
+        cols = ", ".join(_MONTH_COLS)
+        conn.execute("CREATE TEMP TABLE era_name_fix (era_id INTEGER PRIMARY KEY, right_name TEXT)")
+        for emperor, wrong, right in ERA_NAME_FIXES:
+            for era_id in _era_ids(conn, emperor, wrong):
+                conn.execute("INSERT INTO temp.era_name_fix VALUES (?, ?)", (era_id, right))
+
+        conn.execute(f"CREATE TEMP TABLE month_fix AS SELECT {cols} FROM main.month WHERE 0")
+        fixed_eras: list[int] = []
+        for fix in KOREAN_ACCESSION_FIXES:
+            result = _accession_month_rows(conn, *fix)
+            if result is None:
+                continue
+            era_ids, rows = result
+            fixed_eras += era_ids
+            conn.executemany(
+                f"INSERT INTO temp.month_fix ({cols}) VALUES ({', '.join('?' * len(_MONTH_COLS))})", rows)
+        if fixed_eras:
+            conn.execute("CREATE INDEX temp.idx_month_fix_era ON month_fix(era_id, year)")
+            conn.execute("CREATE INDEX temp.idx_month_fix_jdn ON month_fix(first_jdn, last_jdn)")
+            id_list = ", ".join(str(int(i)) for i in sorted(set(fixed_eras)))
+            conn.execute(
+                f"CREATE TEMP VIEW month AS SELECT {cols} FROM main.month WHERE era_id NOT IN ({id_list}) "
+                f"UNION ALL SELECT {cols} FROM temp.month_fix")
+        # A table, not a view: it is built once and every later lookup is fast.
+        conn.execute(_ERA_SUMMARY_SQL)
+        conn.execute("CREATE INDEX temp.idx_era_summary_name ON era_summary(era_name)")
+        conn.execute("CREATE INDEX temp.idx_era_summary_id ON era_summary(era_id)")
+        conn.execute("CREATE INDEX temp.idx_era_summary_emperor ON era_summary(emperor_name)")
+    except sqlite3.Error:
+        # A database with another layout: use it as it is.
+        for stmt in ("DROP TABLE IF EXISTS temp.era_summary", "DROP VIEW IF EXISTS temp.month"):
+            try:
+                conn.execute(stmt)
+            except sqlite3.Error:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +270,10 @@ class EraInfo:
     month_name: str = ""
     is_leap_month: bool = False
     day: int = 0
+    # True when the database marks this month as use of the era after its
+    # official end (month.status = 'P'), e.g. 崇禎 after 1644-04-25, kept by
+    # Ming loyalists and in Joseon Korea.
+    continued_use: bool = False
 
 
 @dataclass
@@ -208,14 +381,18 @@ def _parse_chinese_number(s: str) -> int | None:
 _CJK_PATTERN = re.compile(
     r"^"
     r"(?P<era>[^\d\s年]{1,10}?)"
-    r"(?P<year>[元一二三四五六七八九十百廿卅\d]+)年"
+    # 元 only stands alone (元年). Otherwise eras ending in 元 (開元, 至元,
+    # 永元, 建武中元 ...) would lose that character to the year number.
+    r"(?P<year>元|[一二三四五六七八九十百廿卅〇零\d]+)年"
     r"(?:"
     r"(?P<leap>閏)?"
-    r"(?P<month>[正一二三四五六七八九十廿]+)月"
+    r"(?P<month>[正一二三四五六七八九十廿]+|\d{1,2})月"
     r"(?:"
-    r"(?P<day>[初一二三四五六七八九十廿卅]+)"
-    r"日?"
+    rf"(?P<gz_day>{_GANZHI_CHAR})"
+    r"|"
+    r"(?P<day>[初一二三四五六七八九十廿卅]+|\d{1,2})"
     r")?"
+    r"日?"
     r")?"
     r"$"
 )
@@ -296,7 +473,7 @@ def parse_cjk_date(text: str) -> ParsedDate | None:
         day_str = m.group("day")
         if year_str == "元":
             year = 1
-        elif year_str.isascii() and year_str.isdigit():
+        elif year_str.isdecimal():
             year = int(year_str)
         else:
             year = _parse_chinese_number(year_str)
@@ -304,11 +481,12 @@ def parse_cjk_date(text: str) -> ParsedDate | None:
                 return None
         month: int | None = None
         if month_str:
-            month = _parse_chinese_number(month_str)
+            month = int(month_str) if month_str.isdecimal() else _parse_chinese_number(month_str)
         day: int | None = None
         if day_str:
-            day = _parse_chinese_number(day_str)
-        return ParsedDate(era=era, year=year, month=month, day=day, is_leap_month=is_leap)
+            day = int(day_str) if day_str.isdecimal() else _parse_chinese_number(day_str)
+        return ParsedDate(era=era, year=year, month=month, day=day, is_leap_month=is_leap,
+                          ganzhi_day=m.group("gz_day"))
 
     return None
 
@@ -387,17 +565,97 @@ def format_date(year: int, month: int, day: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Simplified → traditional era names
+# ---------------------------------------------------------------------------
+
+COUNTRIES = ("chinese", "japanese", "korean", "vietnamese")
+
+# Era names in the database use traditional characters. This maps simplified
+# characters to the traditional forms that occur in era names (made with
+# OpenCC t2s over every era-name character in calendar.db).
+_S2T_ERA = dict(item.split(":") for item in (
+    "万:萬 业:業 丰:豐 义:義 乌:烏 乐:樂 云:雲 仪:儀 会:會 兴:興 养:養 册:冊 "
+    "凤:鳳 升:昇 协:協 历:曆歷 号:號 后:後 启:啟 吴:吳 国:國 圣:聖 复:復 "
+    "宁:寧甯 宝:寶 宽:寬寛 寿:壽 将:將 岁:歲 干:乾 广:廣 庆:慶 应:應 开:開 "
+    "总:總 护:護 摄:攝 无:無 显:顯 杨:楊 极:極 汉:漢 济:濟 灵:靈 玺:璽 监:監 "
+    "礼:禮 祯:禎 禄:祿 纪:紀 绍:紹 统:統 绥:綏 绪:緒 维:維 聪:聰 胜:勝 节:節 "
+    "观:觀 视:視 证:證 调:調 贞:貞 贶:貺 资:資 赐:賜 赞:贊 载:載 辅:輔 运:運 "
+    "鉴:鑑 铜:銅 长:長 阳:陽 顺:順 颁:頒 飞:飛 鸟:鳥 鸿:鴻 黄:黃 齐:齊 龙:龍 "
+    "龟:龜"
+).split())
+
+
+def traditional_variants(name: str, limit: int = 64) -> list[str]:
+    """Traditional spellings of a (possibly simplified) era name, e.g. 万历 → 萬曆, 萬歷."""
+    variants = [""]
+    for ch in name:
+        options = [ch] + list(_S2T_ERA.get(ch, ""))
+        variants = [v + o for v in variants for o in options][:limit]
+    return [v for v in variants if v != name]
+
+
+# ---------------------------------------------------------------------------
 # Database queries
 # ---------------------------------------------------------------------------
 
+# Names the database gives to years that have no era name of their own
+_REIGN_ERA_NAMES = ("（無年號）", "（王年）")
+# 文帝後三年, 景帝中五年: the 後元 / 中元 years of a Han emperor
+_REIGN_SUFFIXES = {"後": "（後元）", "中": "（中元）"}
+
+
 def find_eras_by_name(conn: sqlite3.Connection, era_name: str, country: str | None = None) -> list[sqlite3.Row]:
-    sql = "SELECT es.* FROM era_summary es WHERE es.era_name = ?"
-    params: list[str] = [era_name]
+    """Eras with this name. 後元 also finds the rows stored as （後元）."""
+    sql = "SELECT es.* FROM era_summary es WHERE es.era_name IN (?, ?)"
+    params: list[str] = [era_name, f"（{era_name}）"]
     if country:
         sql += " AND es.country = ?"
         params.append(country)
     sql += " ORDER BY es.start_jdn"
     return conn.execute(sql, params).fetchall()
+
+
+def find_eras_by_reign(conn: sqlite3.Connection, name: str, country: str | None = None) -> list[sqlite3.Row]:
+    """
+    Years counted by the ruler's name, with no era name: 文帝七年, 仁祖二十二年,
+    and 文帝後三年 / 景帝中五年 for the 後元 / 中元 years.
+    """
+    tries: list[tuple[str, tuple[str, ...]]] = [(name, _REIGN_ERA_NAMES)]
+    if len(name) > 1 and name[-1] in _REIGN_SUFFIXES:
+        tries.append((name[:-1], (_REIGN_SUFFIXES[name[-1]],)))
+    rows: list[sqlite3.Row] = []
+    for emperor, era_names in tries:
+        sql = (f"SELECT es.* FROM era_summary es WHERE es.emperor_name = ? "
+               f"AND es.era_name IN ({', '.join('?' * len(era_names))})")
+        params: list[str] = [emperor, *era_names]
+        if country:
+            sql += " AND es.country = ?"
+            params.append(country)
+        sql += " ORDER BY es.start_jdn"
+        rows += conn.execute(sql, params).fetchall()
+    return rows
+
+
+def resolve_era_name(conn: sqlite3.Connection, era_name: str,
+                     country: str | None = None) -> tuple[list[sqlite3.Row], str]:
+    """
+    Find eras by name, trying traditional forms if the name is simplified.
+
+    Returns (rows, name_used). name_used differs from era_name when a
+    simplified name (万历) was read as a traditional one (萬曆).
+    """
+    rows = find_eras_by_name(conn, era_name, country)
+    if rows:
+        return rows, era_name
+    for variant in traditional_variants(era_name):
+        rows = find_eras_by_name(conn, variant, country)
+        if rows:
+            return rows, variant
+    for name in [era_name] + traditional_variants(era_name):
+        rows = find_eras_by_reign(conn, name, country)
+        if rows:
+            return rows, name
+    return [], era_name
 
 
 def find_month(conn: sqlite3.Connection, era_id: int, year_in_era: int,
@@ -417,15 +675,20 @@ def find_years_by_ganzhi(conn: sqlite3.Connection, era_id: int, ganzhi: str) -> 
     return conn.execute(sql, (era_id, ganzhi)).fetchall()
 
 
-def find_date_by_jdn(conn: sqlite3.Connection, jdn: int) -> list[sqlite3.Row]:
+def find_date_by_jdn(conn: sqlite3.Connection, jdn: int,
+                     country: str | None = None) -> list[sqlite3.Row]:
     sql = """
         SELECT m.*, es.era_name, es.emperor_name, es.dynasty_name, es.country
         FROM month m
         JOIN era_summary es ON es.era_id = m.era_id
         WHERE m.first_jdn <= ? AND m.last_jdn >= ?
-        ORDER BY es.country, m.first_jdn
     """
-    return conn.execute(sql, (jdn, jdn)).fetchall()
+    params: list = [jdn, jdn]
+    if country:
+        sql += " AND es.country = ?"
+        params.append(country)
+    sql += " ORDER BY es.country, m.first_jdn"
+    return conn.execute(sql, params).fetchall()
 
 
 def get_all_eras(conn: sqlite3.Connection, country: str | None = None,
@@ -460,9 +723,15 @@ def _resolve_ganzhi_day(first_jdn: int, last_jdn: int, start_from: int, target_g
     return None
 
 
-def convert_cjk_to_jdn(conn: sqlite3.Connection, parsed: ParsedDate) -> list[tuple[int, EraInfo]]:
-    """Convert a parsed CJK date to JDN(s). Multiple results when era name is ambiguous."""
-    eras = find_eras_by_name(conn, parsed.era, parsed.country_hint)
+def convert_cjk_to_jdn(conn: sqlite3.Connection, parsed: ParsedDate,
+                       country: str | None = None) -> list[tuple[int, EraInfo]]:
+    """
+    Convert a parsed CJK date to JDN(s). Multiple results when era name is ambiguous.
+
+    country ("chinese", "japanese", "korean", "vietnamese") keeps only that
+    calendar. Simplified era names (万历) are read as traditional (萬曆).
+    """
+    eras, _ = resolve_era_name(conn, parsed.era, country or parsed.country_hint)
     if not eras:
         return []
 
@@ -504,6 +773,8 @@ def convert_cjk_to_jdn(conn: sqlite3.Connection, parsed: ParsedDate) -> list[tup
                         continue
 
                 if day is not None:
+                    if day < 1:
+                        continue
                     day_offset = day - month_row["start_from"]
                     jdn = month_row["first_jdn"] + day_offset
                     if jdn > month_row["last_jdn"]:
@@ -524,14 +795,23 @@ def convert_cjk_to_jdn(conn: sqlite3.Connection, parsed: ParsedDate) -> list[tup
                     month_name=month_row["month_name"],
                     is_leap_month=bool(month_row["leap_month"]),
                     day=day_in_month,
+                    continued_use=month_row["status"] == "P",
                 )
                 results.append((jdn, era_info))
 
     return results
 
 
-def convert_jdn(conn: sqlite3.Connection, jdn: int) -> DateConversion:
-    """Convert a JDN to all calendar representations."""
+def convert_jdn(conn: sqlite3.Connection, jdn: int, era_id: int | None = None,
+                country: str | None = None) -> DateConversion:
+    """
+    Convert a JDN to all calendar representations.
+
+    The year and month 干支 come from the row of era_id when given (the
+    calendar the user entered), else from the first row (Chinese first).
+    Months can differ between calendars: Japanese 天保3年十一月 (month 壬子)
+    overlaps Chinese 道光12年十月 (month 辛亥). country keeps only one calendar.
+    """
     g_year, g_month, g_day = jdn_to_gregorian(jdn)
     gregorian = format_date(g_year, g_month, g_day)
 
@@ -544,8 +824,16 @@ def convert_jdn(conn: sqlite3.Connection, jdn: int) -> DateConversion:
     ganzhi_year = ""
     ganzhi_month_str = ""
 
-    month_rows = find_date_by_jdn(conn, jdn)
+    month_rows = find_date_by_jdn(conn, jdn, country)
     cjk_dates: list[EraInfo] = []
+    ganzhi_row = next((r for r in month_rows if r["era_id"] == era_id and r["ganzhi"]), None)
+    if ganzhi_row is None:
+        ganzhi_row = next((r for r in month_rows if r["ganzhi"]), None)
+    if ganzhi_row is not None:
+        ganzhi_year = ganzhi_row["ganzhi"]
+        # Leap months have no month 干支 of their own
+        if not ganzhi_row["leap_month"]:
+            ganzhi_month_str = month_ganzhi(ganzhi_year, ganzhi_row["month"])
 
     for row in month_rows:
         day_in_month = jdn - row["first_jdn"] + row["start_from"]
@@ -560,11 +848,8 @@ def convert_jdn(conn: sqlite3.Connection, jdn: int) -> DateConversion:
             month_name=row["month_name"],
             is_leap_month=bool(row["leap_month"]),
             day=day_in_month,
+            continued_use=row["status"] == "P",
         ))
-        if not ganzhi_year and row["ganzhi"]:
-            ganzhi_year = row["ganzhi"]
-            if not row["leap_month"]:
-                ganzhi_month_str = month_ganzhi(ganzhi_year, row["month"])
 
     return DateConversion(
         jdn=jdn,
@@ -579,7 +864,9 @@ def get_era_metadata(conn: sqlite3.Connection, era_name: str | None = None,
                      dynasty_name: str | None = None, country: str | None = None) -> list[EraMetadata]:
     """Get metadata for eras matching search criteria."""
     if era_name:
-        rows = find_eras_by_name(conn, era_name, country)
+        rows, _ = resolve_era_name(conn, era_name, country)
+        if dynasty_name:
+            rows = [r for r in rows if r["dynasty_name"] == dynasty_name]
     else:
         rows = get_all_eras(conn, country, dynasty_name)
 
@@ -638,84 +925,152 @@ def _usage():
     sys.exit(1)
 
 
+# Options each command accepts (all take one value)
+_COMMAND_OPTIONS = {
+    "setup": set(),
+    "convert": {"--country"},
+    "jdn": {"--country"},
+    "gregorian": {"--country"},
+    "eras": {"--name", "--dynasty", "--country"},
+}
+_COMMAND_ARGS = {"setup": 0, "convert": 1, "jdn": 1, "gregorian": 3, "eras": 0}
+_COMMAND_USAGE = {
+    "setup": "setup [--db PATH]",
+    "convert": "convert <CJK date string> [--country C] [--db PATH]",
+    "jdn": "jdn <JDN> [--country C] [--db PATH]",
+    "gregorian": "gregorian <year> <month> <day> [--country C] [--db PATH]",
+    "eras": "eras [--name N] [--dynasty D] [--country C] [--db PATH]",
+}
+
+
+def parse_cli(argv: list[str]) -> tuple[str, list[str], dict[str, str]]:
+    """
+    Split argv (without the program name) into (command, positionals, options).
+
+    Unknown options, missing option values, a wrong number of positional
+    arguments and unknown countries raise ValueError.
+    """
+    if not argv:
+        raise ValueError("no command given")
+    cmd, rest = argv[0], argv[1:]
+    if cmd not in _COMMAND_OPTIONS:
+        raise ValueError(f"unknown command: {cmd}")
+    allowed = _COMMAND_OPTIONS[cmd] | {"--db"}
+    positionals: list[str] = []
+    options: dict[str, str] = {}
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg.startswith("--"):
+            name, eq, value = arg.partition("=")
+            if name not in allowed:
+                raise ValueError(f"unknown option for {cmd}: {name}")
+            if not eq:
+                if i + 1 >= len(rest):
+                    raise ValueError(f"{name} needs a value")
+                value = rest[i + 1]
+                i += 1
+            options[name] = value
+        else:
+            positionals.append(arg)
+        i += 1
+    if len(positionals) != _COMMAND_ARGS[cmd]:
+        raise ValueError(f"wrong number of arguments. Usage: calendar_converter.py {_COMMAND_USAGE[cmd]}")
+    country = options.get("--country")
+    if country is not None:
+        country = country.lower()
+        if country not in COUNTRIES:
+            raise ValueError(f"unknown country: {options['--country']} (use one of: {', '.join(COUNTRIES)})")
+        options["--country"] = country
+    return cmd, positionals, options
+
+
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         _usage()
 
-    cmd = sys.argv[1]
+    try:
+        cmd, args, opts = parse_cli(sys.argv[1:])
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print("Run without arguments for help.", file=sys.stderr)
+        sys.exit(2)
+
+    db_path = Path(opts["--db"]).expanduser() if "--db" in opts else None
+    country = opts.get("--country")
 
     if cmd == "setup":
-        download_db()
+        download_db(db_path)
         return
 
-    conn = get_connection()
+    conn = get_connection(db_path)
 
     if cmd == "convert":
-        if len(sys.argv) < 3:
-            print("Usage: calendar_converter.py convert <CJK date string>", file=sys.stderr)
-            sys.exit(1)
-        text = sys.argv[2]
+        text = args[0]
         parsed = parse_cjk_date(text)
         if parsed is None:
             print(f"Could not parse: {text}", file=sys.stderr)
             sys.exit(1)
-        results = convert_cjk_to_jdn(conn, parsed)
+        _, era_used = resolve_era_name(conn, parsed.era, country or parsed.country_hint)
+        if era_used != parsed.era:
+            print(f"Note: read the era name {parsed.era} as {era_used}.",
+                  file=sys.stderr)
+        results = convert_cjk_to_jdn(conn, parsed, country)
         if not results:
             print(f"No matching dates found for: {text}", file=sys.stderr)
+            if not resolve_era_name(conn, era_used)[0]:
+                print(f"The era name {parsed.era} is not in the database. Era names use "
+                      "traditional characters (萬曆, not 万历); Japanese eras use Japanese "
+                      "forms (寛永). Check with: eras --name <name>", file=sys.stderr)
+            elif country:
+                print(f"Try without --country {country}.", file=sys.stderr)
             sys.exit(1)
         output = []
         for jdn, era_info in results:
-            conversion = convert_jdn(conn, jdn)
-            output.append({
+            conversion = convert_jdn(conn, jdn, era_id=era_info.era_id)
+            item = {
                 "input_era": _to_dict(era_info),
                 "jdn": jdn,
                 "gregorian": conversion.gregorian,
                 "julian": conversion.julian,
                 "ganzhi": _to_dict(conversion.ganzhi),
                 "all_cjk_dates": [_to_dict(c) for c in conversion.cjk_dates],
-            })
+            }
+            if era_info.continued_use:
+                note = (f"{era_info.era_name} had officially ended by this date. The database "
+                        "keeps counting it for later or continued use of the era.")
+                if era_info.era_name == "崇禎":
+                    note += " After 1644 崇禎 was used by Ming loyalists and in Joseon Korea."
+                item["note"] = note
+            output.append(item)
         print(json.dumps(output, ensure_ascii=False, indent=2))
 
     elif cmd == "jdn":
-        if len(sys.argv) < 3:
-            print("Usage: calendar_converter.py jdn <JDN>", file=sys.stderr)
+        try:
+            jdn = int(args[0])
+        except ValueError:
+            print(f"JDN must be an integer: {args[0]}", file=sys.stderr)
             sys.exit(1)
-        jdn = int(sys.argv[2])
-        result = convert_jdn(conn, jdn)
+        result = convert_jdn(conn, jdn, country=country)
         _print_json(result)
 
     elif cmd == "gregorian":
-        if len(sys.argv) < 5:
-            print("Usage: calendar_converter.py gregorian <year> <month> <day>", file=sys.stderr)
+        try:
+            year, month, day = int(args[0]), int(args[1]), int(args[2])
+        except ValueError:
+            print("Year, month and day must be integers (astronomical years: 0 = 1 BCE)",
+                  file=sys.stderr)
             sys.exit(1)
-        year, month, day = int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
         jdn = gregorian_to_jdn(year, month, day)
-        result = convert_jdn(conn, jdn)
+        if jdn_to_gregorian(jdn) != (year, month, day):
+            print(f"Invalid Gregorian date: {year}-{month}-{day}", file=sys.stderr)
+            sys.exit(1)
+        result = convert_jdn(conn, jdn, country=country)
         _print_json(result)
 
     elif cmd == "eras":
-        era_name = None
-        dynasty = None
-        country = None
-        i = 2
-        while i < len(sys.argv):
-            if sys.argv[i] == "--name" and i + 1 < len(sys.argv):
-                era_name = sys.argv[i + 1]
-                i += 2
-            elif sys.argv[i] == "--dynasty" and i + 1 < len(sys.argv):
-                dynasty = sys.argv[i + 1]
-                i += 2
-            elif sys.argv[i] == "--country" and i + 1 < len(sys.argv):
-                country = sys.argv[i + 1]
-                i += 2
-            else:
-                print(f"Unknown option: {sys.argv[i]}", file=sys.stderr)
-                sys.exit(1)
-        results = get_era_metadata(conn, era_name, dynasty, country)
+        results = get_era_metadata(conn, opts.get("--name"), opts.get("--dynasty"), country)
         _print_json(results)
-
-    else:
-        _usage()
 
     conn.close()
 

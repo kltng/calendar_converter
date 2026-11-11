@@ -1,7 +1,7 @@
 ---
 name: cjk-calendar
 description: Convert between Chinese, Japanese, Korean, and Vietnamese lunisolar calendar dates and Gregorian/Julian dates. Use when the user needs to look up historical East Asian dates, convert era names (年號) like 康熙, 天保, 崇禎 to Western dates, compute sexagenary cycle (干支) day/month/year, or work with Julian Day Numbers. Supports ~220 BCE to 1945 CE with 1,637 eras and 131,808 lunar month records. Runs entirely locally with a SQLite database.
-version: 1.0.0
+version: 1.0.3
 license: MIT
 author: Kwok-leong Tang
 contributors:
@@ -20,7 +20,7 @@ Convert between East Asian lunisolar calendars (Chinese, Japanese, Korean, Vietn
 - Looking up era metadata (date ranges, dynasties, emperors)
 - Computing sexagenary cycle (干支) for a given date
 - Working with Julian Day Numbers (JDN)
-- Japanese era shorthand (M45.7.30, H26.6.8)
+- Japanese era shorthand for lunisolar Meiji dates (M1.9.8 to M5.12.2, e.g. M2.1.1)
 
 ## Setup
 
@@ -32,6 +32,13 @@ python3 scripts/calendar_converter.py setup
 
 This downloads `calendar.db` into the `scripts/` directory. Only needed once.
 
+To keep the database somewhere else, add `--db PATH` to any command (also to `setup`):
+
+```bash
+python3 scripts/calendar_converter.py setup --db ~/data/calendar.db
+python3 scripts/calendar_converter.py convert "崇禎三年四月初三" --db ~/data/calendar.db
+```
+
 ## Quick Start
 
 ### CJK Date → Gregorian
@@ -40,14 +47,20 @@ This downloads `calendar.db` into the `scripts/` directory. Only needed once.
 python3 scripts/calendar_converter.py convert "崇禎三年四月初三"
 python3 scripts/calendar_converter.py convert "康熙六十一年十二月二十九日"
 python3 scripts/calendar_converter.py convert "天保三年閏十一月十五日"
-python3 scripts/calendar_converter.py convert "M1.1.1"
+python3 scripts/calendar_converter.py convert "M2.1.1"
+python3 scripts/calendar_converter.py convert "天保三年十一月初一" --country japanese
 ```
+
+`--country` (`chinese`, `japanese`, `korean` or `vietnamese`) keeps only that calendar's matches. Unknown options and extra arguments are errors.
 
 ### Gregorian → CJK Dates
 
 ```bash
-python3 scripts/calendar_converter.py gregorian 1644 3 19
+python3 scripts/calendar_converter.py gregorian 1644 4 25
+python3 scripts/calendar_converter.py gregorian 1832 11 22 --country japanese
 ```
+
+1644-04-25 (Gregorian) is 崇禎十七年三月十九日, the day Beijing fell. "三月十九日" is the lunar date, not March 19.
 
 ### JDN → All Calendars
 
@@ -68,13 +81,17 @@ python3 scripts/calendar_converter.py eras --country japanese
 | Format | Example | Notes |
 |---|---|---|
 | Chinese numerals | 崇禎三年四月初三 | Standard CJK date |
-| Leap month | 天保三年閏九月十五日 | 閏 prefix marks leap |
+| Leap month | 天保三年閏十一月十五日 | 閏 prefix marks leap |
 | 元年 (year 1) | 康熙元年正月初一 | 元 = 1, 正 = month 1 |
 | 廿/卅 shorthand | 光緒廿八年三月卅日 | 廿 = 20, 卅 = 30 |
 | Arabic numerals | 康熙61年12月29日 | Mixed format |
-| Japanese shorthand | M1.1.1 | M/T/S/H/R for eras (lunisolar years only) |
-| Ganzhi year | 嘉慶甲午年三月初五 | Sexagenary year cycle |
-| Full ganzhi | 嘉慶甲午年丁亥月丙子日 | Year + month + day ganzhi |
+| Japanese shorthand | M2.1.1 | M/T/S/H/R accepted, but only lunisolar Meiji dates (M1.9.8 to M5.12.2) are in the database |
+| Ganzhi year | 嘉慶甲子年三月初五 | Sexagenary year cycle (the year must fall in that era) |
+| Full ganzhi | 嘉慶甲子年戊辰月甲午日 | Year + month + day ganzhi |
+| Simplified era name | 万历10年1月1日 | Read as 萬曆; a note on stderr says so |
+| Numbered year + ganzhi day | 建元六年六月丁酉 | The usual form in the 正史. No result if that 干支 day is not in the month |
+| Ruler's name, no era name | 文帝七年十月, 仁祖二十二年三月十九日 | Finds the years stored as （無年號） or （王年）: Han before 建元, Korean kings |
+| 中 / 後 years of a Han emperor | 景帝中五年, 文帝後三年, 後元元年 | Finds the eras stored as （中元） and （後元） |
 
 ## Output Format
 
@@ -85,27 +102,34 @@ All commands output JSON. Example for `convert`:
   {
     "input_era": {
       "era_name": "崇禎",
-      "era_id": 371,
+      "era_id": 650,
       "emperor_name": "思宗",
       "dynasty_name": "明",
       "country": "chinese",
       "year_in_era": 3,
       "month": 4,
-      "month_name": "四月",
+      "month_name": "四",
       "is_leap_month": false,
       "day": 3
     },
-    "jdn": 2316520,
+    "jdn": 2316539,
     "gregorian": "1630-05-14",
-    "julian": "1630-05-04",
-    "ganzhi": { "year": "庚午", "month": "辛巳", "day": "丙子" },
+    "julian": null,
+    "ganzhi": { "year": "庚午", "month": "辛巳", "day": "壬子" },
     "all_cjk_dates": [
       { "era_name": "崇禎", "country": "chinese", "year_in_era": 3, ... },
+      { "era_name": "天聰", "country": "chinese", "year_in_era": 4, ... },
       { "era_name": "寛永", "country": "japanese", "year_in_era": 7, ... }
     ]
   }
 ]
 ```
+
+- In `convert`, `ganzhi.year` and `ganzhi.month` come from the calendar you entered. Months can differ between calendars: Japanese 天保3年十一月 (month 壬子) is Chinese 道光12年十月 (month 辛亥). In `jdn` and `gregorian`, they come from the first row (Chinese first), or from the `--country` you give. A leap month has no month 干支, so `month` is empty.
+- `continued_use: true` means the era had officially ended, but the database keeps counting it for later use. Example: 崇禎 goes on after 崇禎十七年三月十九日 (1644-04-25) up to year 268 (1895), because Ming loyalists and Joseon Korea kept using it. Such rows are still labelled `chinese` / `明`. `convert` adds a `note` for them.
+- `julian` is filled only for dates before the Gregorian reform (JDN < 2299161, i.e. before 1582-10-15); otherwise it is `null`.
+- Years use astronomical numbering: `0000` = 1 BCE, `-0001` = 2 BCE.
+- The `gregorian` command takes a proleptic Gregorian date. For a Western date before 1582 written in the Julian calendar, convert it to JDN first and use the `jdn` command.
 
 ## Key Concepts
 
@@ -123,7 +147,18 @@ The 60-unit cycle combines 10 Heavenly Stems (天干: 甲乙丙丁戊己庚辛�
 
 ### Ambiguous Era Names
 
-The same era name can appear in different dynasties or countries (e.g., 建武 was used by both Han and Japanese emperors). When results are ambiguous, the converter returns all matches. Use `--country` to filter.
+The same era name can appear in different dynasties or countries (e.g., 建武 was used by both Han and Japanese emperors). When results are ambiguous, the converter returns all matches. Use `--country` to filter. Example: `天保三年` alone gives 38 months across 北齊, 西梁 and Japan; with `--country japanese` it gives 13.
+
+Era names in the database use traditional characters (Japanese eras use Japanese forms, e.g. 寛永). Simplified names such as 万历 or 光绪 are converted for you. If a name is still not found, check it with `eras --name`.
+
+### Corrections to the database
+
+The converter corrects known errors in `calendar.db` when it opens the file. The file itself is not changed, so raw SQL on `calendar.db` with another tool still shows the old values.
+
+- **建始** (西漢 成帝, 32–29 BCE) is stored as 「始建」. The converter shows and finds it as 建始.
+- **Korean regnal years of 中宗 and 仁祖.** Both kings took the throne after the king before them was deposed, and the Joseon Sillok counts that same year as year 1 (中宗 1년 = 1506, 仁祖 1년 = 1623). The database starts the count one year later. The converter follows the Sillok: 1644-04-25 is 仁祖 22年 3月 19日, and 光海君 15年 ends on 3月 12日 (1623-04-11).
+
+For other Korean kings the database already agrees with the Sillok (year 1 is the year after the accession, or the accession year for 太祖 and 世祖). When a Korean regnal year matters, still check it against the Sillok (https://sillok.history.go.kr), which prints the year at the top of each entry.
 
 ## Coverage
 
@@ -136,7 +171,7 @@ The same era name can appear in different dynasties or countries (e.g., 建武 w
 
 Total: 1,637 eras, 131,808 lunar month records.
 
-**Note**: Japanese dates after Meiji 5 (1872) are not in the database because Japan adopted the Gregorian calendar in 1873. Japanese shorthand (M/T/S/H/R) only works for lunisolar-era dates.
+**Note**: Japanese dates after Meiji 5 (1872) are not in the database because Japan adopted the Gregorian calendar in 1873. Japanese shorthand (M/T/S/H/R) only works for lunisolar-era dates, so T/S/H/R inputs return "No matching dates found".
 
 ## Using in Python
 
@@ -150,20 +185,22 @@ from calendar_converter import (
     convert_jdn, gregorian_to_jdn, get_era_metadata,
 )
 
-conn = get_connection()
+conn = get_connection()  # or get_connection(Path("~/data/calendar.db").expanduser())
 
 # CJK → Gregorian
 parsed = parse_cjk_date("康熙六十一年十二月二十九日")
 results = convert_cjk_to_jdn(conn, parsed)
 for jdn, era_info in results:
-    conversion = convert_jdn(conn, jdn)
+    conversion = convert_jdn(conn, jdn, era_id=era_info.era_id)  # 干支 of this calendar
     print(f"{era_info.era_name} → {conversion.gregorian}")
 
+# Only Japanese dates: convert_cjk_to_jdn(conn, parsed, country="japanese")
+
 # Gregorian → CJK
-jdn = gregorian_to_jdn(1644, 3, 19)
+jdn = gregorian_to_jdn(1644, 4, 25)
 conversion = convert_jdn(conn, jdn)
 for cjk in conversion.cjk_dates:
-    print(f"{cjk.era_name}{cjk.year_in_era}年{cjk.month_name}{cjk.day}日 ({cjk.country})")
+    print(f"{cjk.era_name}{cjk.year_in_era}年{cjk.month_name}月{cjk.day}日 ({cjk.country})")
 ```
 
 ## Database Schema
@@ -174,4 +211,24 @@ See `references/database_schema.md` for the full schema and query guide.
 
 - `scripts/calendar_converter.py` — Standalone converter (Python 3.10+, zero dependencies)
 - `references/database_schema.md` — SQLite schema and query patterns
+- `tests/test_calendar_converter.py` — offline tests (build a small fixture database; run `python3 -m unittest discover -s tests`)
 - Source data: [DILA Authority Database](http://authority.dila.edu.tw/time/)
+
+## Inside the Ming research suite
+
+When working in `ming-qing-research-suite`, its `sino-authorities` MCP server reads the same database and is the preferred route for converting era dates to JDN there. Use this skill for direct conversions, era lists, and raw SQL on `calendar.db`.
+
+## Feedback and Citation
+
+**Report a problem.** This skill is part of the public repository [kltng/humanities-skills](https://github.com/kltng/humanities-skills). If it fails (an API changed, a script errors, or these instructions are wrong), report it as a GitHub issue:
+
+1. Ask the user before filing. Issues are public.
+2. Check for an existing report: `gh issue list --repo kltng/humanities-skills --state all --search "cjk-calendar"`
+3. File it: `gh issue create --repo kltng/humanities-skills --label bug --title "[cjk-calendar] <short summary>" --body "<details>"`. Without `gh`, give the user this link: https://github.com/kltng/humanities-skills/issues/new?template=skill-problem.yml
+4. Include the skill name and version, what you ran, the error text, what you expected, and the environment (OS, Python version). Leave out API keys, personal data, private file paths, and unpublished research.
+
+**Cite.** If this skill helped work that is published, please cite it, together with the data source it uses:
+
+> Tang, Kwok-leong. *humanities-skills: cjk-calendar* (version <version at the top of this file>). GitHub, <year>. https://github.com/kltng/humanities-skills
+
+When you help a user write up results that relied on this skill, remind them once about this citation.

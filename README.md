@@ -428,9 +428,13 @@ skill/
 ├── scripts/
 │   ├── calendar_converter.py       # Standalone converter (Python 3.10+, stdlib only)
 │   └── .gitignore                  # Ignores downloaded calendar.db
-└── references/
-    └── database_schema.md          # SQLite schema and query patterns
+├── references/
+│   └── database_schema.md          # SQLite schema and query patterns
+└── tests/
+    └── test_calendar_converter.py  # Offline tests: cd skill && python3 -m unittest discover -s tests
 ```
+
+This folder is a copy of the `cjk-calendar` skill published in [kltng/humanities-skills](https://github.com/kltng/humanities-skills) (version 1.0.3). Make changes there first, then copy them here.
 
 ### Setup
 
@@ -446,7 +450,7 @@ python3 skill/scripts/calendar_converter.py setup
 python3 skill/scripts/calendar_converter.py convert "崇禎三年四月初三"
 
 # Gregorian → all CJK calendars
-python3 skill/scripts/calendar_converter.py gregorian 1644 3 19
+python3 skill/scripts/calendar_converter.py gregorian 1644 4 25
 
 # Julian Day Number → all calendars
 python3 skill/scripts/calendar_converter.py jdn 2299161
