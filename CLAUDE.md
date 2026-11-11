@@ -150,9 +150,10 @@ uv sync --extra dev
 curl -L -o data/raw/authority_time.zip "https://authority.dila.edu.tw/downloads/authority_time.2012-02.zip"
 cd data/raw && unzip authority_time.zip && cd ../..
 
-# Build the SQLite database from raw data (two steps)
+# Build the SQLite database from raw data (three steps)
 uv run python -m data.scripts.build_db
 uv run python -m data.scripts.add_vietnamese
+uv run python -m data.scripts.apply_corrections   # known errors in the DILA data; see README
 
 # Run the API server locally
 uv run uvicorn src.calendar_converter.api:app --reload --port 8000
@@ -193,5 +194,5 @@ docker compose up
 - When era names are ambiguous, the API must return all matches with disambiguation metadata (dynasty, country, date range) rather than guessing.
 - All Gregorian dates before Oct 15, 1582 are proleptic. Julian calendar dates should be provided alongside for pre-1582 dates.
 - The DILA data is CC BY-SA 2.5 TW licensed — attribution required.
-- SQLite DB must be reproducibly buildable from raw data via `data/scripts/build_db` + `data/scripts/add_vietnamese`.
+- SQLite DB must be reproducibly buildable from raw data via `data/scripts/build_db` + `data/scripts/add_vietnamese` + `data/scripts/apply_corrections`. New data fixes go into `apply_corrections.py` (each one checks that the error is still there, and is recorded in the `data_correction` table), never by hand into `calendar.db`.
 - Vietnamese calendar data is derived by mapping Vietnamese eras onto Chinese lunar month data (same lunisolar calendar). Vietnamese era year counts may have ±1 year offset near era boundaries due to lunar/Gregorian alignment.

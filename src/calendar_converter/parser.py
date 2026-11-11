@@ -117,9 +117,11 @@ _CJK_PATTERN = re.compile(
     r"(?P<leap>閏)?"                    # optional leap month marker
     r"(?P<month>[正一二三四五六七八九十廿]+)月"  # month + 月
     r"(?:"                              # optional day group
-    r"(?P<day>[初一二三四五六七八九十廿卅]+)"    # day
-    r"日?"                              # optional 日
+    rf"(?P<gz_day>{_GANZHI_CHAR})"      # 干支 day, as in 建元六年六月丁酉 (the usual form in the 正史)
+    r"|"
+    r"(?P<day>[初一二三四五六七八九十廿卅]+)"    # numeric day
     r")?"
+    r"日?"                              # optional 日
     r")?"
     r"$"
 )
@@ -240,6 +242,7 @@ def parse_cjk_date(text: str) -> ParsedDate | None:
         return ParsedDate(
             era=era, year=year, month=month, day=day,
             is_leap_month=is_leap,
+            ganzhi_day=m.group("gz_day"),
         )
 
     return None

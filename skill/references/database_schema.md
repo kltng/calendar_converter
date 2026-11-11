@@ -37,14 +37,14 @@ Each row represents one lunar month within an era.
 | `id` | INTEGER PK | Month record ID |
 | `year` | INTEGER | Ordinal year within era (1 = 元年) |
 | `month` | INTEGER | Month number (1-12) |
-| `month_name` | TEXT | Chinese month name (e.g., 四月) |
+| `month_name` | TEXT | Chinese month name without 月 (e.g., 四, 正, 臘, 閏六) |
 | `leap_month` | INTEGER | 1 if leap month, 0 otherwise |
 | `era_id` | INTEGER FK | References era(id) |
 | `first_jdn` | INTEGER | JDN of first day of month |
 | `last_jdn` | INTEGER | JDN of last day of month |
 | `ganzhi` | TEXT | Sexagenary year designation (e.g., 庚午) |
 | `start_from` | INTEGER | Day numbering start (usually 1) |
-| `status` | TEXT | `'S'` standard, `'P'` proleptic |
+| `status` | TEXT | `'S'` standard; `'P'` = era counted on after its official end (e.g. 崇禎 after 1644-04-25, used by Ming loyalists and Joseon Korea). The converter shows this as `continued_use`. |
 | `eclipse` | INTEGER | Eclipse flag |
 
 ### `era_summary` (view)
@@ -127,8 +127,8 @@ ORDER BY start_jdn;
 |---|---|---|
 | 4713 BCE Jan 1 (Julian) | 0 | JDN epoch |
 | 1582 Oct 15 (Gregorian) | 2,299,161 | Gregorian reform |
-| 1644 Mar 19 (Gregorian) | 2,321,605 | Fall of Ming |
-| 1868 Jan 25 (Gregorian) | 2,403,400 | Meiji era start |
+| 1644 Apr 25 (Gregorian) | 2,321,634 | 崇禎十七年三月十九日, fall of Beijing (the lunar date is 三月十九日) |
+| 1868 Oct 23 (Gregorian) | 2,403,629 | Meiji era proclaimed (first Meiji month row in the DB) |
 
 ## Day Counting
 
@@ -137,3 +137,5 @@ Lunar months typically have 29 or 30 days. The number of days in a month is:
 
 Day numbering within a month starts at `start_from` (usually 1). To compute day N:
 `jdn = first_jdn + (N - start_from)`
+
+> The converter corrects two known errors in this data when it opens the file (the era name 建始, and the regnal years of the Korean kings 中宗 and 仁祖). See "Corrections to the database" in SKILL.md. Raw SQL on the file shows the uncorrected rows.
