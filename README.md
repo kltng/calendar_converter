@@ -62,6 +62,7 @@ cd data/raw && unzip authority_time.zip && cd ../..
 # Build the SQLite database
 uv run python -m data.scripts.build_db
 uv run python -m data.scripts.add_vietnamese
+uv run python -m data.scripts.apply_corrections
 
 # Run tests to verify
 uv run pytest
@@ -352,6 +353,9 @@ All conversion tools accept optional disambiguation parameters: `country` (`"chi
 | Ganzhi year | `嘉慶甲子年` | 嘉慶 era, year with ganzhi 甲子 |
 | Full ganzhi | `崇禎庚午年辛巳月壬子日` | Resolved via sexagenary cycle lookup |
 | Mixed ganzhi+numeric | `崇禎庚午年四月初三` | Ganzhi year + numeric month/day |
+| Numbered year + ganzhi day | `建元六年六月丁酉` | 建元 era, year 6, month 6, the day 丁酉 (the usual form in the 正史) |
+| Ruler's name, no era name | `文帝七年十月`, `仁祖二十二年三月十九日` | The years stored as （無年號） or （王年） |
+| 中 / 後 years of a Han emperor | `景帝中五年`, `文帝後三年`, `後元元年` | The eras stored as （中元） and （後元） |
 
 ### Japanese Shorthand
 
@@ -383,6 +387,18 @@ day_comment           -- annotations for specific JDNs (historical events, eclip
 ```
 
 The `month` table is the core: each row represents one lunar month with its JDN range. Individual days are derived from `first_jdn + (day - start_from)`.
+
+### Corrections to the DILA data
+
+`data/scripts/apply_corrections.py` fixes known errors after the build, and records each fix in the table `data_correction (key, description, applied_at)`. It is safe to run more than once.
+
+| Key | Correction |
+|-----|------------|
+| `era-jianshi` | The era of 西漢 成帝 that starts in 32 BCE is 建始 (漢書 卷10), not 始建. |
+| `korea-jungjong` | 中宗 of Joseon counts from his accession year, 1506, as in the Sillok (中宗 1년 9월 2일). 燕山君 ends on 12年 9月 1日. |
+| `korea-injo` | 仁祖 of Joseon counts from his accession year, 1623, as in the Sillok (仁祖 1년 3월 13일). 光海君 ends on 15年 3月 12日. So 1644-04-25 is 仁祖 22年 3月 19日. |
+
+Both kings took the throne after the king before them was deposed. The Sillok counts that year as year 1; the DILA data started the count one year later. For other Joseon kings the data already agrees with the Sillok.
 
 ---
 
@@ -470,6 +486,7 @@ uv run pytest tests/test_cbdb_verification.py -v
 # Rebuild the database from scratch
 uv run python -m data.scripts.build_db
 uv run python -m data.scripts.add_vietnamese
+uv run python -m data.scripts.apply_corrections
 ```
 
 ### Test Suites

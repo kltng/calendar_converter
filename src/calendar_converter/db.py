@@ -19,6 +19,12 @@ def get_connection(
     return conn
 
 
+# Names the database gives to years that have no era name of their own
+REIGN_ERA_NAMES = ("（無年號）", "（王年）")
+# 文帝後三年, 景帝中五年: the 後元 / 中元 years of a Han emperor
+REIGN_SUFFIXES = {"後": "（後元）", "中": "（中元）"}
+
+
 def find_eras_by_name(
     conn: sqlite3.Connection,
     era_name: str,
@@ -26,24 +32,42 @@ def find_eras_by_name(
     dynasty: str | None = None,
     emperor: str | None = None,
 ) -> list[sqlite3.Row]:
-    """Find all eras matching a given name, optionally filtered by country/dynasty/emperor."""
-    sql = """
-        SELECT es.*
-        FROM era_summary es
-        WHERE es.era_name = ?
+    """Find all eras matching a given name, optionally filtered by country/dynasty/emperor.
+
+    Besides the exact name, this finds:
+    - eras stored in brackets: 後元 finds （後元）, 中元 finds （中元）;
+    - years counted by the ruler's name, when no era has that name:
+      文帝七年 and 仁祖二十二年 find the eras stored as （無年號） or （王年）,
+      and 文帝後三年 / 景帝中五年 find that emperor's （後元） / （中元）.
     """
-    params: list[str] = [era_name]
-    if country:
-        sql += " AND es.country = ?"
-        params.append(country)
-    if dynasty:
-        sql += " AND es.dynasty_name = ?"
-        params.append(dynasty)
-    if emperor:
-        sql += " AND es.emperor_name = ?"
-        params.append(emperor)
-    sql += " ORDER BY es.start_jdn"
-    return conn.execute(sql, params).fetchall()
+    def run(where: str, values: list[str]) -> list[sqlite3.Row]:
+        sql = f"SELECT es.* FROM era_summary es WHERE {where}"
+        params = list(values)
+        if country:
+            sql += " AND es.country = ?"
+            params.append(country)
+        if dynasty:
+            sql += " AND es.dynasty_name = ?"
+            params.append(dynasty)
+        if emperor:
+            sql += " AND es.emperor_name = ?"
+            params.append(emperor)
+        sql += " ORDER BY es.start_jdn"
+        return conn.execute(sql, params).fetchall()
+
+    rows = run("es.era_name IN (?, ?)", [era_name, f"（{era_name}）"])
+    if rows:
+        return rows
+
+    # Reign names: the era name given is really the ruler's name.
+    rows = run(
+        f"es.emperor_name = ? AND es.era_name IN ({', '.join('?' * len(REIGN_ERA_NAMES))})",
+        [era_name, *REIGN_ERA_NAMES],
+    )
+    if len(era_name) > 1 and era_name[-1] in REIGN_SUFFIXES:
+        rows += run("es.emperor_name = ? AND es.era_name = ?",
+                    [era_name[:-1], REIGN_SUFFIXES[era_name[-1]]])
+    return rows
 
 
 def find_month(
