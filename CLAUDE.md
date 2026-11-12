@@ -63,6 +63,7 @@ Key parsing challenges:
 - Intercalary month markers (閏)
 - Japanese shorthand eras (M/T/S/H/R + year)
 - Ambiguous era names (太平 used 10+ times) — resolved by optional dynasty/country hint
+- Guessed hints and simplified characters — small language models add `country: "中国"` or a wrong dynasty to almost every call, and people type 崇祯 for 崇禎. `resolve_cjk_date` (converter.py) accepts country aliases, matches names by their simplified form, drops a hint that does not fit, and reports it in `notes`. It never hides ambiguity.
 
 ### API Layer: FastAPI (Python)
 
@@ -81,7 +82,7 @@ Response includes: JDN, Gregorian date, Julian date (pre-1582), full ganzhi (yea
 
 ### MCP Server (LLM Tool Use)
 
-`src/calendar_converter/mcp_server.py` — stdio-based MCP server exposing 4 tools:
+`src/calendar_converter/tools.py` holds the 4 tools and the descriptions a model reads; `mcp_server.py` (stdio) and `mcp_http.py` (the deployed `/mcp` and `/sse` endpoints) both register them from there, so change tool text and behaviour only in `tools.py`:
 - `convert_cjk_date` — parse and convert a CJK date string
 - `convert_jdn` — convert Julian Day Number to all calendars
 - `convert_gregorian_date` — convert YYYY-MM-DD to all calendars
@@ -129,7 +130,9 @@ calendar_converter/
 │       ├── converter.py        # Core conversion logic (JDN pivot)
 │       ├── models.py           # Pydantic response models
 │       ├── api.py              # FastAPI routes
-│       └── mcp_server.py       # MCP server for LLM tool-use (stdio transport)
+│       ├── tools.py            # The 4 MCP tools and their descriptions (shared)
+│       ├── mcp_server.py       # MCP server for LLM tool-use (stdio transport)
+│       └── mcp_http.py         # MCP over HTTP (/mcp, /sse), mounted into the FastAPI app
 └── tests/
     ├── test_parser.py
     ├── test_converter.py

@@ -10,16 +10,15 @@ from fastapi.responses import FileResponse
 from starlette.routing import Mount
 
 from .converter import (
-    build_ambiguous_candidates,
-    convert_cjk_to_jdn,
+    conversion_from_resolution,
     convert_jdn,
     get_era_metadata,
     gregorian_to_jdn,
+    resolve_cjk_date,
 )
 from .db import get_connection, DB_PATH
 from .mcp_http import mcp as mcp_server
 from .models import DateConversion, EraMetadata, ErrorResponse
-from .parser import parse_cjk_date
 
 _conn: sqlite3.Connection | None = None
 
@@ -70,7 +69,7 @@ async def convert(
     date: str | None = Query(None, description="CJK date string, e.g. 崇禎三年四月初三"),
     jdn: int | None = Query(None, description="Julian Day Number"),
     gregorian: str | None = Query(None, description="Gregorian date (YYYY-MM-DD)"),
-    country: str | None = Query(None, description="Country hint: chinese, japanese, korean"),
+    country: str | None = Query(None, description="Country hint: chinese, japanese, korean, vietnamese"),
     dynasty: str | None = Query(None, description="Dynasty hint for disambiguation, e.g. 唐, 元"),
     emperor: str | None = Query(None, description="Emperor hint for disambiguation, e.g. 肅宗, 順帝"),
 ) -> DateConversion | ErrorResponse:
@@ -92,19 +91,12 @@ async def convert(
         return convert_jdn(db, target_jdn)
 
     if date is not None:
-        parsed = parse_cjk_date(date)
+        resolution = resolve_cjk_date(db, date, country=country, dynasty=dynasty, emperor=emperor)
+        parsed = resolution.parsed
         if parsed is None:
             raise HTTPException(400, f"Cannot parse date: {date}")
 
-        if country:
-            parsed.country_hint = country
-        if dynasty:
-            parsed.dynasty_hint = dynasty
-        if emperor:
-            parsed.emperor_hint = emperor
-
-        results = convert_cjk_to_jdn(db, parsed)
-        if not results:
+        if not resolution.results:
             # Return ambiguity info
             from .db import find_eras_by_name
             candidates_rows = find_eras_by_name(db, parsed.era)
@@ -128,16 +120,7 @@ async def convert(
                 )
             return ErrorResponse(error=f"Era '{parsed.era}' not found in database")
 
-        jdn_val, _ = results[0]
-        conversion = convert_jdn(db, jdn_val)
-
-        # Check if results span multiple distinct eras (ambiguous)
-        distinct_era_ids = {info.era_id for _, info in results}
-        if len(distinct_era_ids) > 1:
-            conversion.ambiguous = True
-            conversion.other_candidates = build_ambiguous_candidates(results)
-
-        return conversion
+        return conversion_from_resolution(db, resolution)
 
     raise HTTPException(400, "Provide one of: date, jdn, or gregorian")
 
@@ -186,17 +169,16 @@ async def convert_batch(
     results: list[DateConversion | ErrorResponse] = []
 
     for date_str in dates:
-        parsed = parse_cjk_date(date_str)
-        if parsed is None:
+        resolution = resolve_cjk_date(db, date_str)
+        if resolution.parsed is None:
             results.append(ErrorResponse(error=f"Cannot parse: {date_str}"))
             continue
 
-        conversions = convert_cjk_to_jdn(db, parsed)
-        if not conversions:
+        if not resolution.results:
             results.append(ErrorResponse(error=f"No match for: {date_str}"))
             continue
 
-        jdn_val, _ = conversions[0]
+        jdn_val, _ = resolution.results[0]
         results.append(convert_jdn(db, jdn_val))
 
     return results

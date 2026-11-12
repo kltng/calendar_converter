@@ -159,6 +159,16 @@ When an era name is shared across countries, use the `country` parameter:
 curl "http://localhost:8000/convert?date=天保三年閏九月十五日&country=japanese"
 ```
 
+#### Forgiving input
+
+The hints are optional, and callers (language models above all) often guess them. So the lookup is forgiving:
+
+- `country` may be written `chinese`, `China`, `中国`, `Japan`, `日本`, `Korea`, `Vietnam` and so on, in any letter case.
+- Era, dynasty and emperor names may be in simplified characters: `崇祯三年四月初三` finds 崇禎. `明朝` finds 明.
+- A hint that does not fit the date is dropped, and the answer says so in `notes`:
+  `"notes": ["dynasty '崇禎' does not fit this date, so it was ignored"]`.
+  An era name used more than once is still reported with `ambiguous: true` and `other_candidates`.
+
 #### Disambiguate era names
 
 Many era names were reused across dynasties. When the converter finds multiple matching eras, the response includes `ambiguous: true` and an `other_candidates` list showing all alternative interpretations:
