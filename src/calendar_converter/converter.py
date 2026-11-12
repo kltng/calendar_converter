@@ -6,9 +6,11 @@ All conversions go through JDN: CJK date → JDN → Gregorian/Julian/other CJK 
 """
 
 import sqlite3
-from .db import find_eras_by_name, find_month, find_date_by_jdn, find_years_by_ganzhi
+from dataclasses import dataclass, field
+
+from .db import COUNTRIES, canonical_country, find_eras_by_name, find_month, find_date_by_jdn, find_years_by_ganzhi
 from .models import AmbiguousCandidate, DateConversion, EraInfo, GanzhiInfo, EraMetadata, ParsedDate as ParsedDateModel
-from .parser import ParsedDate
+from .parser import ParsedDate, parse_cjk_date
 
 # Sexagenary cycle (干支)
 HEAVENLY_STEMS = "甲乙丙丁戊己庚辛壬癸"
@@ -235,6 +237,89 @@ def convert_cjk_to_jdn(
                 results.append((jdn, era_info))
 
     return results
+
+
+# Simplified characters the parser's patterns do not know
+_DATE_TEXT_FIXES = str.maketrans({"闰": "閏", "号": "日", "號": "日"})
+
+
+def normalize_date_text(text: str) -> str:
+    """Tidy a date string before parsing: no spaces, 闰 read as 閏, 初三號 read as 初三日."""
+    return "".join(text.split()).translate(_DATE_TEXT_FIXES)
+
+
+@dataclass
+class Resolution:
+    """Outcome of looking up a CJK date string."""
+    text: str
+    parsed: ParsedDate | None = None
+    results: list[tuple[int, EraInfo]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def resolve_cjk_date(
+    conn: sqlite3.Connection,
+    text: str,
+    country: str | None = None,
+    dynasty: str | None = None,
+    emperor: str | None = None,
+) -> Resolution:
+    """Parse a CJK date and find its JDN, forgiving hints that do not fit.
+
+    The hints are optional and are often guessed by the caller. A country may be
+    written as China, 中国, Chinese and so on. When the date is not found with the
+    hints, they are dropped (dynasty and emperor first, then country) and the
+    lookup is repeated. Every dropped hint is reported in `notes`, and an era name
+    used more than once is still flagged as ambiguous by the caller.
+    """
+    resolution = Resolution(text=text, parsed=parse_cjk_date(normalize_date_text(text)))
+    parsed = resolution.parsed
+    if parsed is None:
+        return resolution
+
+    country = (country or "").strip() or None
+    dynasty = (dynasty or "").strip() or None
+    emperor = (emperor or "").strip() or None
+
+    own_country = parsed.country_hint  # set by the parser for M45.7.30 and the like
+    wanted_country = canonical_country(country)
+    if country and wanted_country is None:
+        resolution.notes.append(
+            f"country '{country}' is not one of {', '.join(COUNTRIES)}, so it was ignored"
+        )
+
+    attempts = [(wanted_country or own_country, dynasty, emperor)]
+    if dynasty or emperor:
+        attempts.append((wanted_country or own_country, None, None))
+    if wanted_country and wanted_country != own_country:
+        attempts.append((own_country, None, None))
+
+    for try_country, try_dynasty, try_emperor in attempts:
+        parsed.country_hint, parsed.dynasty_hint, parsed.emperor_hint = try_country, try_dynasty, try_emperor
+        resolution.results = convert_cjk_to_jdn(conn, parsed)
+        if resolution.results:
+            dropped = [
+                ("country", country, wanted_country and try_country != wanted_country),
+                ("dynasty", dynasty, dynasty and not try_dynasty),
+                ("emperor", emperor, emperor and not try_emperor),
+            ]
+            for name, value, was_dropped in dropped:
+                if was_dropped:
+                    resolution.notes.append(f"{name} '{value}' does not fit this date, so it was ignored")
+            break
+
+    return resolution
+
+
+def conversion_from_resolution(conn: sqlite3.Connection, resolution: Resolution) -> DateConversion:
+    """Build the full answer for a resolved date. `resolution.results` must not be empty."""
+    jdn_val, _ = resolution.results[0]
+    conversion = convert_jdn(conn, jdn_val)
+    if len({info.era_id for _, info in resolution.results}) > 1:
+        conversion.ambiguous = True
+        conversion.other_candidates = build_ambiguous_candidates(resolution.results)
+    conversion.notes = list(resolution.notes)
+    return conversion
 
 
 def convert_jdn(

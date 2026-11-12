@@ -54,6 +54,11 @@ class DateConversion(BaseModel):
         description="Other possible interpretations when era name is ambiguous. "
         "Use dynasty/emperor hints to disambiguate.",
     )
+    notes: list[str] = Field(
+        default_factory=list,
+        description="Plain remarks about the request, e.g. a country, dynasty or emperor hint "
+        "that did not fit the date and was ignored.",
+    )
 
 
 class ParsedDate(BaseModel):
